@@ -21,6 +21,7 @@ from users.managed_community import (
     process_managed_community_dispatch,
     reconcile_managed_community_dispatches,
     reconcile_managed_community_observations,
+    resume_managed_community,
 )
 from users.managed_identity import login_managed_identity
 from users.models import ManagedCommunityProjection, User
@@ -42,7 +43,11 @@ def active_result(token="community-secret"):
         "actor_uri": "https://community.example/@vhabcdef",
         "technical_handle": "vhabcdef",
         "lifecycle": "active",
-        "credential": {"status": "active", "access_token": token},
+        "credential": {
+            "status": "active",
+            "access_token": token,
+            "scopes": ["read", "write", "follow"],
+        },
     }
 
 
@@ -222,6 +227,159 @@ def test_suspend_invalidates_existing_product_session_and_stages_deletion(monkey
     projection = ManagedCommunityProjection.objects.get(pk=result.projection.pk)
     assert projection.state == ManagedCommunityProjection.State.DELETING
     assert projection.operation == ManagedCommunityProjection.Operation.DELETE
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_suspend_clears_revoked_local_credential_and_direct_resume_renews(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("resume-direct"))
+
+    provision_lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient, "provision", lambda *a: active_result("old-token")
+    )
+    process_managed_community_dispatch(
+        provision_lease.dispatch_id, provision_lease.lease_token, result.projection.pk
+    )
+
+    assert begin_managed_community_suspend(result.user)
+    suspend_lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    calls = []
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "revoke",
+        lambda *a: calls.append("revoke") or {"credential": {"status": "revoked"}},
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "suspend",
+        lambda *a: calls.append("suspend") or {"lifecycle": "suspended"},
+    )
+    process_managed_community_dispatch(
+        suspend_lease.dispatch_id, suspend_lease.lease_token, result.projection.pk
+    )
+    managed = ManagedVinylHubCommunityAccount.objects.get(user=result.user)
+    assert not managed.access_token
+    assert calls == ["revoke", "suspend"]
+
+    assert resume_managed_community(result.user)
+    resume_lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "resume",
+        lambda *a: calls.append("resume") or {"lifecycle": "active"},
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "renew",
+        lambda *a: calls.append("renew") or active_result("new-token"),
+    )
+    result.user.refresh_from_db()
+    assert not result.user.is_active
+    process_managed_community_dispatch(
+        resume_lease.dispatch_id, resume_lease.lease_token, result.projection.pk
+    )
+    managed.refresh_from_db()
+    result.user.refresh_from_db()
+    result.projection.refresh_from_db()
+    assert managed.access_token == "new-token"
+    assert managed.access_token != "old-token"
+    assert "new-token" not in str(managed.access_data)
+    assert result.user.is_active
+    assert result.projection.state == ManagedCommunityProjection.State.PROVISIONED
+    assert calls == ["revoke", "suspend", "resume", "renew"]
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_direct_resume_renew_failure_keeps_product_blocked(monkeypatch, settings):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("resume-failure"))
+    lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient, "resume", lambda *a: {"lifecycle": "active"}
+    )
+
+    def failed_renew(*args):
+        raise ManagedCommunityAmbiguousError("renew unavailable")
+
+    monkeypatch.setattr(PixelfedAccountEdgeClient, "renew", failed_renew)
+    result.projection.operation = ManagedCommunityProjection.Operation.RESUME
+    result.projection.state = ManagedCommunityProjection.State.UNKNOWN
+    result.projection.save(update_fields=["operation", "state", "updated_at"])
+    result.user.is_active = False
+    result.user.save(update_fields=["is_active"])
+    process_managed_community_dispatch(
+        lease.dispatch_id, lease.lease_token, result.projection.pk
+    )
+    result.user.refresh_from_db()
+    result.projection.refresh_from_db()
+    assert not result.user.is_active
+    assert result.projection.state == ManagedCommunityProjection.State.UNKNOWN
+    assert (
+        DurableDispatch.objects.get(pk=lease.dispatch_id).state
+        == DurableDispatch.State.OBSERVATION
+    )
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_resume_observation_renews_stale_credential_before_reactivation(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("resume-observation"))
+    lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient, "provision", lambda *a: active_result("old-token")
+    )
+    process_managed_community_dispatch(
+        lease.dispatch_id, lease.lease_token, result.projection.pk
+    )
+
+    managed = ManagedVinylHubCommunityAccount.objects.get(user=result.user)
+    managed.access_token = "old-token"
+    managed.save(update_fields=["access_data"])
+    result.user.is_active = False
+    result.user.save(update_fields=["is_active"])
+    result.projection.operation = ManagedCommunityProjection.Operation.RESUME
+    result.projection.state = ManagedCommunityProjection.State.UNKNOWN
+    result.projection.save(update_fields=["operation", "state", "updated_at"])
+    dispatch = DurableDispatch.objects.get(
+        responsibility_ref=f"{DISPATCH_PREFIX}{result.projection.pk}"
+    )
+    dispatch.state = DurableDispatch.State.OBSERVATION
+    dispatch.save(update_fields=["state", "updated_at"])
+
+    calls = []
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "read",
+        lambda *a, **k: calls.append("read") or {"lifecycle": "active"},
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "renew",
+        lambda *a, **k: calls.append("renew") or active_result("new-token"),
+    )
+    assert reconcile_managed_community_observations() == 1
+    managed.refresh_from_db()
+    result.user.refresh_from_db()
+    result.projection.refresh_from_db()
+    assert calls == ["read", "renew"]
+    assert managed.access_token == "new-token"
+    assert managed.access_token != "old-token"
+    assert result.user.is_active
+    assert result.projection.state == ManagedCommunityProjection.State.PROVISIONED
 
 
 @pytest.mark.django_db(databases="__all__", transaction=True)

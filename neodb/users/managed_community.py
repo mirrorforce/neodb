@@ -346,15 +346,41 @@ def _managed_account(projection):
     return accounts[0] if accounts else None
 
 
+def _credential_from_result(result: dict) -> str:
+    credential = result.get("credential")
+    token = credential.get("access_token") if isinstance(credential, dict) else None
+    scopes = credential.get("scopes") if isinstance(credential, dict) else None
+    expected_scopes = {"read", "write", "follow"}
+    if not isinstance(token, str) or not token:
+        raise ManagedCommunityProtocolError("owner returned no credential secret")
+    if not isinstance(scopes, list) or not all(
+        isinstance(scope, str) for scope in scopes
+    ) or set(scopes) != expected_scopes:
+        raise ManagedCommunityProtocolError(
+            "owner returned an invalid managed Community credential scope"
+        )
+    if any(isinstance(scope, str) and scope.startswith("admin:") for scope in scopes):
+        raise ManagedCommunityProtocolError(
+            "owner returned an administrative managed Community credential"
+        )
+    return token
+
+
+def _clear_managed_credential(projection) -> None:
+    account = _managed_account(projection)
+    if not account:
+        return
+    account.access_token = ""
+    account.refresh_token = ""
+    account.save(update_fields=["access_data", "modified"])
+
+
 def _store_provision_result(projection, result: dict) -> bool:
     if result.get("lifecycle") != "active" or not result.get("projection_exists"):
         raise ManagedCommunityProtocolError(
             "provision did not return an active projection"
         )
-    credential = result.get("credential")
-    token = credential.get("access_token") if isinstance(credential, dict) else None
-    if not isinstance(token, str) or not token:
-        raise ManagedCommunityProtocolError("provision returned no credential")
+    token = _credential_from_result(result)
     remote_id = str(result.get("user_id") or result.get("profile_id") or "")
     if not remote_id:
         raise ManagedCommunityProtocolError("provision returned no remote identity")
@@ -465,6 +491,11 @@ def process_managed_community_dispatch(
             return
         if operation == ManagedCommunityProjection.Operation.SUSPEND:
             client.revoke(subject)
+            with transaction.atomic():
+                projection = ManagedCommunityProjection.objects.select_for_update().get(
+                    pk=projection_id
+                )
+                _clear_managed_credential(projection)
             result = client.suspend(subject)
             if result.get("lifecycle") != "suspended":
                 raise ManagedCommunityProtocolError("suspend did not return suspended")
@@ -484,11 +515,12 @@ def process_managed_community_dispatch(
             result = client.resume(subject)
             if result.get("lifecycle") != "active":
                 raise ManagedCommunityProtocolError("resume did not return active")
+            renewed = client.renew(subject)
             with transaction.atomic():
                 projection = ManagedCommunityProjection.objects.select_for_update().get(
                     pk=projection_id
                 )
-                projection.state = ManagedCommunityProjection.State.PROVISIONED
+                _store_provision_result(projection, renewed)
                 projection.user.is_active = True
                 projection.user.save(update_fields=["is_active"])
                 _mark_projection_terminal(
@@ -500,6 +532,11 @@ def process_managed_community_dispatch(
             return
         if operation == ManagedCommunityProjection.Operation.DELETE:
             client.revoke(subject)
+            with transaction.atomic():
+                projection = ManagedCommunityProjection.objects.select_for_update().get(
+                    pk=projection_id
+                )
+                _clear_managed_credential(projection)
             result = client.delete(subject)
             result = client.delete_status(subject)
             lifecycle = result.get("lifecycle")
@@ -535,8 +572,10 @@ def process_managed_community_dispatch(
                 projection.state = ManagedCommunityProjection.State.REJECTED
             elif operation == ManagedCommunityProjection.Operation.SUSPEND:
                 projection.state = ManagedCommunityProjection.State.SUSPEND_UNKNOWN
-            else:
+            elif operation == ManagedCommunityProjection.Operation.DELETE:
                 projection.state = ManagedCommunityProjection.State.DELETE_UNKNOWN
+            else:
+                projection.state = ManagedCommunityProjection.State.UNKNOWN
             _set_error(projection, "owner_rejected", exc)
             projection.save(
                 update_fields=[
@@ -640,29 +679,15 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
             )
         return
     if lifecycle == "active":
-        account = _managed_account(projection)
-        if account and account.access_token:
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                projection.state = ManagedCommunityProjection.State.PROVISIONED
-                if projection.operation == ManagedCommunityProjection.Operation.RESUME:
-                    projection.user.is_active = True
-                    projection.user.save(update_fields=["is_active"])
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            return
         renewed = PixelfedAccountEdgeClient().renew(_remote_subject(projection))
         with transaction.atomic():
             projection = ManagedCommunityProjection.objects.select_for_update().get(
                 pk=projection_id
             )
             _store_provision_result(projection, renewed)
+            if projection.operation == ManagedCommunityProjection.Operation.RESUME:
+                projection.user.is_active = True
+                projection.user.save(update_fields=["is_active"])
             _mark_projection_terminal(
                 dispatch_id,
                 lease_token,
