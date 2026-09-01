@@ -51,6 +51,19 @@ def active_result(token="community-secret"):
     }
 
 
+def move_to_observation(result, operation, state):
+    result.projection.operation = operation
+    result.projection.state = state
+    result.projection.save(update_fields=["operation", "state", "updated_at"])
+    dispatch = DurableDispatch.objects.get(
+        responsibility_ref=f"{DISPATCH_PREFIX}{result.projection.pk}"
+    )
+    dispatch.state = DurableDispatch.State.OBSERVATION
+    dispatch.next_attempt_at = None
+    dispatch.save(update_fields=["state", "next_attempt_at", "updated_at"])
+    return dispatch
+
+
 @pytest.mark.django_db(databases="__all__", transaction=True)
 def test_first_auth_is_atomic_and_schedules_one_projection(monkeypatch, settings):
     settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
@@ -188,6 +201,150 @@ def test_ambiguous_provision_requires_read_repair_and_never_blind_repeats(
         DurableDispatch.objects.get(pk=lease.dispatch_id).state
         == DurableDispatch.State.RETIRED
     )
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_ambiguous_suspend_active_schedules_safe_retry_without_renew(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("suspend-active"))
+    assert begin_managed_community_suspend(result.user)
+    dispatch = move_to_observation(
+        result,
+        ManagedCommunityProjection.Operation.SUSPEND,
+        ManagedCommunityProjection.State.SUSPEND_UNKNOWN,
+    )
+    calls = []
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "read",
+        lambda *a, **k: calls.append("read") or {"lifecycle": "active"},
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "renew",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("suspend observation must not renew")
+        ),
+    )
+
+    assert reconcile_managed_community_observations() == 1
+    dispatch.refresh_from_db()
+    result.projection.refresh_from_db()
+    result.user.refresh_from_db()
+    assert calls == ["read"]
+    assert dispatch.state == DurableDispatch.State.READY
+    assert dispatch.last_outcome == DurableDispatch.Outcome.SAFE_RETRY
+    assert result.projection.operation == ManagedCommunityProjection.Operation.SUSPEND
+    assert (
+        result.projection.state == ManagedCommunityProjection.State.SUSPEND_UNKNOWN
+    )
+    assert not result.user.is_active
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_ambiguous_resume_suspended_schedules_safe_retry_and_stays_blocked(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("resume-suspended"))
+    result.user.is_active = False
+    result.user.save(update_fields=["is_active"])
+    dispatch = move_to_observation(
+        result,
+        ManagedCommunityProjection.Operation.RESUME,
+        ManagedCommunityProjection.State.UNKNOWN,
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "read",
+        lambda *a, **k: {"lifecycle": "suspended"},
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "renew",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("suspended resume observation must not renew")
+        ),
+    )
+
+    assert reconcile_managed_community_observations() == 1
+    dispatch.refresh_from_db()
+    result.projection.refresh_from_db()
+    result.user.refresh_from_db()
+    assert dispatch.state == DurableDispatch.State.READY
+    assert dispatch.last_outcome == DurableDispatch.Outcome.SAFE_RETRY
+    assert result.projection.operation == ManagedCommunityProjection.Operation.RESUME
+    assert result.projection.state == ManagedCommunityProjection.State.SUSPENDED
+    assert not result.user.is_active
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_delete_active_observation_schedules_safe_retry_and_stays_blocked(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("delete-active"))
+    assert begin_managed_community_deletion(result.user) is False
+    dispatch = move_to_observation(
+        result,
+        ManagedCommunityProjection.Operation.DELETE,
+        ManagedCommunityProjection.State.DELETING,
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "delete_status",
+        lambda *a, **k: {"lifecycle": "active"},
+    )
+
+    assert reconcile_managed_community_observations() == 1
+    dispatch.refresh_from_db()
+    result.projection.refresh_from_db()
+    result.user.refresh_from_db()
+    assert dispatch.state == DurableDispatch.State.READY
+    assert dispatch.last_outcome == DurableDispatch.Outcome.SAFE_RETRY
+    assert result.projection.operation == ManagedCommunityProjection.Operation.DELETE
+    assert result.projection.state == ManagedCommunityProjection.State.DELETE_UNKNOWN
+    assert not result.user.is_active
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_delete_requested_observation_remains_observation(monkeypatch, settings):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("delete-requested"))
+    assert begin_managed_community_deletion(result.user) is False
+    dispatch = move_to_observation(
+        result,
+        ManagedCommunityProjection.Operation.DELETE,
+        ManagedCommunityProjection.State.DELETING,
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "delete_status",
+        lambda *a, **k: {"lifecycle": "delete_requested"},
+    )
+
+    assert reconcile_managed_community_observations() == 0
+    dispatch.refresh_from_db()
+    result.projection.refresh_from_db()
+    result.user.refresh_from_db()
+    assert dispatch.state == DurableDispatch.State.OBSERVATION
+    assert result.projection.operation == ManagedCommunityProjection.Operation.DELETE
+    assert result.projection.state == ManagedCommunityProjection.State.DELETING
+    assert not result.user.is_active
 
 
 @pytest.mark.django_db(databases="__all__", transaction=True)

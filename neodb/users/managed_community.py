@@ -447,6 +447,19 @@ def _mark_projection_terminal(dispatch_id, lease_token, projection, outcome):
         mark_terminal(dispatch_id, lease_token, outcome=outcome)
 
 
+def _schedule_observation_safe_retry(
+    dispatch_id, projection_id, *, state, operation, reason
+):
+    with transaction.atomic():
+        projection = ManagedCommunityProjection.objects.select_for_update().get(
+            pk=projection_id
+        )
+        projection.state = state
+        projection.operation = operation
+        projection.save(update_fields=["state", "operation", "updated_at"])
+        schedule_safe_retry_after_observation(dispatch_id, reason=reason)
+
+
 def _complete_native_deletion(user_id: int) -> None:
     from users.views.account import _complete_native_user_deletion
 
@@ -627,7 +640,22 @@ def process_managed_community_dispatch(
 def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
     lifecycle = result.get("lifecycle")
     projection = ManagedCommunityProjection.objects.get(pk=projection_id)
+    operation = projection.operation
     if lifecycle == "missing":
+        if operation == ManagedCommunityProjection.Operation.DELETE:
+            with transaction.atomic():
+                projection = ManagedCommunityProjection.objects.select_for_update().get(
+                    pk=projection_id
+                )
+                projection.state = ManagedCommunityProjection.State.DELETED
+                _mark_projection_terminal(
+                    dispatch_id,
+                    lease_token,
+                    projection,
+                    DurableDispatch.Outcome.KNOWN_SUCCESS,
+                )
+            _complete_native_deletion(projection.user_id)
+            return
         with transaction.atomic():
             projection = ManagedCommunityProjection.objects.select_for_update().get(
                 pk=projection_id
@@ -648,24 +676,37 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
             )
         return
     if (
-        lifecycle in {"deleted", "delete_requested"}
-        and projection.operation == ManagedCommunityProjection.Operation.DELETE
+        lifecycle == "delete_requested"
+        and operation == ManagedCommunityProjection.Operation.DELETE
     ):
-        if lifecycle == "deleted":
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                projection.state = ManagedCommunityProjection.State.DELETED
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            _complete_native_deletion(projection.user_id)
+        return
+    if (
+        lifecycle == "deleted"
+        and operation == ManagedCommunityProjection.Operation.DELETE
+    ):
+        with transaction.atomic():
+            projection = ManagedCommunityProjection.objects.select_for_update().get(
+                pk=projection_id
+            )
+            projection.state = ManagedCommunityProjection.State.DELETED
+            _mark_projection_terminal(
+                dispatch_id,
+                lease_token,
+                projection,
+                DurableDispatch.Outcome.KNOWN_SUCCESS,
+            )
+        _complete_native_deletion(projection.user_id)
         return
     if lifecycle == "suspended":
+        if operation == ManagedCommunityProjection.Operation.RESUME:
+            _schedule_observation_safe_retry(
+                dispatch_id,
+                projection_id,
+                state=ManagedCommunityProjection.State.SUSPENDED,
+                operation=operation,
+                reason="Owner remains suspended; resume can be retried safely.",
+            )
+            return
         with transaction.atomic():
             projection = ManagedCommunityProjection.objects.select_for_update().get(
                 pk=projection_id
@@ -679,6 +720,24 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
             )
         return
     if lifecycle == "active":
+        if operation == ManagedCommunityProjection.Operation.SUSPEND:
+            _schedule_observation_safe_retry(
+                dispatch_id,
+                projection_id,
+                state=ManagedCommunityProjection.State.SUSPEND_UNKNOWN,
+                operation=operation,
+                reason="Owner remains active; suspend can be retried safely.",
+            )
+            return
+        if operation == ManagedCommunityProjection.Operation.DELETE:
+            _schedule_observation_safe_retry(
+                dispatch_id,
+                projection_id,
+                state=ManagedCommunityProjection.State.DELETE_UNKNOWN,
+                operation=operation,
+                reason="Owner remains active; delete can be retried safely.",
+            )
+            return
         renewed = PixelfedAccountEdgeClient().renew(_remote_subject(projection))
         with transaction.atomic():
             projection = ManagedCommunityProjection.objects.select_for_update().get(
@@ -737,42 +796,8 @@ def reconcile_managed_community_observations(limit: int = 100) -> int:
                 else client.read(_remote_subject(projection), repair=True)
             )
             lifecycle = result.get("lifecycle")
-            if (
-                lifecycle == "active"
-                and projection.operation != ManagedCommunityProjection.Operation.DELETE
-            ):
+            if lifecycle in {"active", "suspended", "deleted", "missing"}:
                 _observe_projection(dispatch.pk, "observation", projection_id, result)
-            elif (
-                lifecycle in {"deleted", "missing"}
-                and projection.operation == ManagedCommunityProjection.Operation.DELETE
-            ):
-                with transaction.atomic():
-                    projection = (
-                        ManagedCommunityProjection.objects.select_for_update().get(
-                            pk=projection_id
-                        )
-                    )
-                    projection.state = ManagedCommunityProjection.State.DELETED
-                    projection.save(update_fields=["state", "updated_at"])
-                dispatch.state = DurableDispatch.State.RETIRED
-                dispatch.last_outcome = DurableDispatch.Outcome.KNOWN_SUCCESS
-                dispatch.save(update_fields=["state", "last_outcome", "updated_at"])
-                _complete_native_deletion(projection.user_id)
-            elif lifecycle == "missing":
-                with transaction.atomic():
-                    projection = (
-                        ManagedCommunityProjection.objects.select_for_update().get(
-                            pk=projection_id
-                        )
-                    )
-                    projection.state = ManagedCommunityProjection.State.PENDING
-                    projection.operation = (
-                        ManagedCommunityProjection.Operation.PROVISION
-                    )
-                    projection.save(update_fields=["state", "operation", "updated_at"])
-                schedule_safe_retry_after_observation(
-                    dispatch.pk, reason="owner proved no Community projection exists"
-                )
             else:
                 continue
             repaired += 1
