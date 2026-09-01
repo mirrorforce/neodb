@@ -353,9 +353,11 @@ def _credential_from_result(result: dict) -> str:
     expected_scopes = {"read", "write", "follow"}
     if not isinstance(token, str) or not token:
         raise ManagedCommunityProtocolError("owner returned no credential secret")
-    if not isinstance(scopes, list) or not all(
-        isinstance(scope, str) for scope in scopes
-    ) or set(scopes) != expected_scopes:
+    if (
+        not isinstance(scopes, list)
+        or not all(isinstance(scope, str) for scope in scopes)
+        or set(scopes) != expected_scopes
+    ):
         raise ManagedCommunityProtocolError(
             "owner returned an invalid managed Community credential scope"
         )
@@ -464,6 +466,30 @@ def _complete_native_deletion(user_id: int) -> None:
     from users.views.account import _complete_native_user_deletion
 
     _complete_native_user_deletion(get_user_model().objects.get(pk=user_id))
+
+
+def _reprovision_after_resume_observation(
+    dispatch_id, lease_token, projection_id, projection
+):
+    repaired = PixelfedAccountEdgeClient().provision(
+        _remote_subject(projection),
+        projection.technical_handle,
+        projection.technical_email,
+        projection.display_seed,
+    )
+    with transaction.atomic():
+        projection = ManagedCommunityProjection.objects.select_for_update().get(
+            pk=projection_id
+        )
+        _store_provision_result(projection, repaired)
+        projection.user.is_active = True
+        projection.user.save(update_fields=["is_active"])
+        _mark_projection_terminal(
+            dispatch_id,
+            lease_token,
+            projection,
+            DurableDispatch.Outcome.KNOWN_SUCCESS,
+        )
 
 
 def process_managed_community_dispatch(
@@ -656,6 +682,25 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
                 )
             _complete_native_deletion(projection.user_id)
             return
+        if operation == ManagedCommunityProjection.Operation.SUSPEND:
+            with transaction.atomic():
+                projection = ManagedCommunityProjection.objects.select_for_update().get(
+                    pk=projection_id
+                )
+                _clear_managed_credential(projection)
+                projection.state = ManagedCommunityProjection.State.SUSPENDED
+                _mark_projection_terminal(
+                    dispatch_id,
+                    lease_token,
+                    projection,
+                    DurableDispatch.Outcome.KNOWN_SUCCESS,
+                )
+            return
+        if operation == ManagedCommunityProjection.Operation.RESUME:
+            _reprovision_after_resume_observation(
+                dispatch_id, lease_token, projection_id, projection
+            )
+            return
         with transaction.atomic():
             projection = ManagedCommunityProjection.objects.select_for_update().get(
                 pk=projection_id
@@ -682,6 +727,31 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
         return
     if (
         lifecycle == "deleted"
+        and operation == ManagedCommunityProjection.Operation.SUSPEND
+    ):
+        with transaction.atomic():
+            projection = ManagedCommunityProjection.objects.select_for_update().get(
+                pk=projection_id
+            )
+            _clear_managed_credential(projection)
+            projection.state = ManagedCommunityProjection.State.SUSPENDED
+            _mark_projection_terminal(
+                dispatch_id,
+                lease_token,
+                projection,
+                DurableDispatch.Outcome.KNOWN_SUCCESS,
+            )
+        return
+    if (
+        lifecycle == "deleted"
+        and operation == ManagedCommunityProjection.Operation.RESUME
+    ):
+        _reprovision_after_resume_observation(
+            dispatch_id, lease_token, projection_id, projection
+        )
+        return
+    if (
+        lifecycle == "deleted"
         and operation == ManagedCommunityProjection.Operation.DELETE
     ):
         with transaction.atomic():
@@ -697,6 +767,27 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
             )
         _complete_native_deletion(projection.user_id)
         return
+    if lifecycle == "deleted":
+        with transaction.atomic():
+            projection = ManagedCommunityProjection.objects.select_for_update().get(
+                pk=projection_id
+            )
+            projection.state = ManagedCommunityProjection.State.PENDING
+            projection.operation = ManagedCommunityProjection.Operation.PROVISION
+            projection.save(update_fields=["state", "operation", "updated_at"])
+        if lease_token == "observation":
+            schedule_safe_retry_after_observation(
+                dispatch_id,
+                reason="Owner proved the Community projection was deleted.",
+            )
+        else:
+            mark_safe_retry(
+                dispatch_id,
+                lease_token,
+                error_category="owner_deleted",
+                error_text="Owner proved the Community projection was deleted.",
+            )
+        return
     if lifecycle == "suspended":
         if operation == ManagedCommunityProjection.Operation.RESUME:
             _schedule_observation_safe_retry(
@@ -705,6 +796,15 @@ def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
                 state=ManagedCommunityProjection.State.SUSPENDED,
                 operation=operation,
                 reason="Owner remains suspended; resume can be retried safely.",
+            )
+            return
+        if operation == ManagedCommunityProjection.Operation.DELETE:
+            _schedule_observation_safe_retry(
+                dispatch_id,
+                projection_id,
+                state=ManagedCommunityProjection.State.DELETE_UNKNOWN,
+                operation=operation,
+                reason="Owner remains suspended; delete can be retried safely.",
             )
             return
         with transaction.atomic():
