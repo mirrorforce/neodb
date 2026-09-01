@@ -24,6 +24,13 @@ VALIDATION_SOURCE_TREE
 APPLICATION_RUNTIME_IDENTITY
 DEPENDENCY_IDENTITY
 SERVICE_PREREQUISITES
+TEST_RUNNER_IDENTITY
+RUNNER_PLATFORM
+BASELINE_VALIDATION_SOURCE_SHA
+BASELINE_VALIDATION_RESULT
+HEAD_VALIDATION_SOURCE_SHA
+HEAD_VALIDATION_RESULT
+HEAD_DELTA_RESULT
 COMMAND
 CWD
 EXIT
@@ -31,6 +38,8 @@ RESULT
 ```
 
 `RESULT` must be one of `PASS`, `FAIL`, `NOT_RUN`, `BLOCKED`, or `UNKNOWN`. Keep validation claims at their observed tier: never promote `T0` to `T1`, `T1` to `T2`, mock to live, or an old image to a current-head runtime. `T1 PASS != T2 PASS`.
+
+For any baseline-versus-task-head comparison, report both source SHAs and validation results. `HEAD_DELTA_RESULT` must be one of `NONE`, `NEW_REGRESSION`, `IMPROVED`, or `UNKNOWN`; compare diagnostic semantics rather than treating matching exit codes or counts as proof. A baseline `FAIL` remains `FAIL` or bounded debt and must not be promoted to `PASS`.
 
 Run commands with test-only values or isolated local services. Redact credentials and do not include secrets, tokens, private user data, database dumps, media, logs containing personal data, or uncontrolled environment output. Evidence must support replay without becoming a second source of Product requirements.
 
