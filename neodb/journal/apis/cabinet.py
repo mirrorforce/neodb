@@ -1,5 +1,7 @@
 from datetime import datetime
+from typing import Any
 
+from django.db.models import QuerySet
 from django.http import HttpRequest
 from ninja import Schema, Status
 from ninja.pagination import paginate
@@ -49,6 +51,21 @@ def _cabinet_card(copy: CollectionItem) -> dict:
     }
 
 
+class CabinetPageNumberPagination(PageNumberPagination):
+    """Serialize only the selected page into local Product cards."""
+
+    def paginate_queryset(
+        self,
+        queryset: QuerySet,
+        pagination: PageNumberPagination.Input,
+        request: HttpRequest,
+        **params: Any,
+    ):
+        value = super().paginate_queryset(queryset, pagination, request, **params)
+        value["data"] = [_cabinet_card(copy) for copy in value["data"]]
+        return value
+
+
 def _parse_release_ref(value: str) -> CatalogRef | None:
     try:
         ref = CatalogRef.parse(value)
@@ -84,7 +101,7 @@ def add_cabinet_copy(request: HttpRequest, payload: CabinetAddSchema):
     response={200: list[CabinetItemSchema], 401: Result, 403: Result},
     tags=["cabinet"],
 )
-@paginate(PageNumberPagination)
+@paginate(CabinetPageNumberPagination)
 def list_cabinet_copies(request: HttpRequest):
     return (
         CollectionItem.objects.filter(owner=request.user)
