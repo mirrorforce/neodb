@@ -7,3 +7,4 @@ from .review import *  # noqa
 from .shelf import *  # noqa
 from .tag import *  # noqa
 from .post import *  # noqa
+from .community import *  # noqa

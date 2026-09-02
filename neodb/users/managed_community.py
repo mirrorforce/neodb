@@ -47,6 +47,8 @@ _PATHS = {
     "resume": "/api/v1/internal/vinylhub/account-edge/resume",
     "delete": "/api/v1/internal/vinylhub/account-edge/delete",
     "delete_status": "/api/v1/internal/vinylhub/account-edge/delete-status",
+    "status_operation_create": "/api/v1/internal/vinylhub/status-operation/create",
+    "status_operation_read": "/api/v1/internal/vinylhub/status-operation/read",
 }
 
 
@@ -165,6 +167,114 @@ class PixelfedAccountEdgeClient:
 
     def delete_status(self, subject: str):
         return self._subject("delete_status", subject)
+
+    def status_operation_create(
+        self, subject: str, operation_key: str, intent: dict
+    ) -> dict:
+        """Create through Pixelfed's confidential, stable-key owner seam."""
+        return self._post(
+            "status_operation_create",
+            {
+                "external_subject": subject,
+                "operation_key": operation_key,
+                **intent,
+            },
+        )
+
+    def status_operation_read(
+        self, subject: str, operation_key: str, repair: bool = True
+    ) -> dict:
+        """Read/repair a possibly ambiguous owner operation by the same key."""
+        return self._post(
+            "status_operation_read",
+            {
+                "external_subject": subject,
+                "operation_key": operation_key,
+                "repair": repair,
+            },
+        )
+
+    @staticmethod
+    def _managed_api_url(account, path: str) -> str:
+        return f"https://{account._api_domain}{path}"
+
+    def _managed_request(self, method: str, account, path: str, **kwargs):
+        headers = kwargs.pop("headers", {})
+        headers.update(
+            {
+                "User-Agent": settings.NEODB_USER_AGENT,
+                "Authorization": f"Bearer {account.access_token}",
+            }
+        )
+        kwargs.setdefault("timeout", self.timeout)
+        try:
+            return httpx.request(
+                method,
+                self._managed_api_url(account, path),
+                headers=headers,
+                **kwargs,
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            raise ManagedCommunityAmbiguousError(
+                "Pixelfed managed-account request outcome is unknown"
+            ) from exc
+
+    def upload_media(self, account, file, filename: str, content_type: str | None):
+        """Upload media through the ordinary managed-account API."""
+        response = self._managed_request(
+            "POST",
+            account,
+            "/api/v1/media",
+            files={"file": (filename, file, content_type or "application/octet-stream")},
+        )
+        if response.status_code in {400, 401, 403, 404, 409, 422}:
+            raise ManagedCommunityRejectedError("Pixelfed media upload rejected")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ManagedCommunityAmbiguousError("Pixelfed media upload is ambiguous")
+        try:
+            result = response.json()
+        except (ValueError, TypeError) as exc:
+            raise ManagedCommunityProtocolError(
+                "Pixelfed media upload returned invalid JSON"
+            ) from exc
+        media_id = result.get("id") if isinstance(result, dict) else None
+        if not media_id:
+            raise ManagedCommunityProtocolError(
+                "Pixelfed media upload returned no media id"
+            )
+        try:
+            media_id = int(media_id)
+        except (TypeError, ValueError) as exc:
+            raise ManagedCommunityProtocolError(
+                "Pixelfed media upload returned an invalid media id"
+            ) from exc
+        if media_id < 1:
+            raise ManagedCommunityProtocolError(
+                "Pixelfed media upload returned an invalid media id"
+            )
+        return media_id
+
+    def read_status(self, account, status_id: str):
+        """Read current owner Status existence; callers interpret 404 only."""
+        return self._managed_request("GET", account, f"/api/v1/statuses/{status_id}")
+
+    def read_feed(self, account, limit: int = 20):
+        response = self._managed_request(
+            "GET", account, "/api/v1/timelines/home", params={"limit": limit}
+        )
+        if response.status_code in {400, 401, 403, 404, 409, 422}:
+            raise ManagedCommunityRejectedError("Pixelfed feed request rejected")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ManagedCommunityAmbiguousError("Pixelfed feed request is ambiguous")
+        try:
+            result = response.json()
+        except (ValueError, TypeError) as exc:
+            raise ManagedCommunityProtocolError(
+                "Pixelfed feed returned invalid JSON"
+            ) from exc
+        if not isinstance(result, list):
+            raise ManagedCommunityProtocolError("Pixelfed feed returned a non-list")
+        return result
 
 
 @dataclass(frozen=True)
