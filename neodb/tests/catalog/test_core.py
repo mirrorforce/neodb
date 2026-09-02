@@ -1,9 +1,11 @@
 import httpx
 import pytest
+from django.conf import settings
 
 from catalog.core import (
     CatalogRef,
     CoreClient,
+    CoreClientError,
     CoreDegradedError,
     CoreErrorKind,
     CoreNotFoundError,
@@ -97,6 +99,17 @@ def test_catalog_ref_round_trips_and_rejects_mismatched_payload():
     assert CatalogRef.from_payload(ref_payload(123)) == ref
     with pytest.raises(ValueError, match="do not agree"):
         CatalogRef.from_payload({**ref_payload(123), "ref": "discogs:release:124"})
+
+
+def test_core_configuration_is_optional_and_unconfigured_client_fails_closed():
+    assert settings.VINYL_CATALOG_CORE_URL == ""
+    assert settings.VINYL_CATALOG_CORE_CONNECT_TIMEOUT == 2.0
+    assert settings.VINYL_CATALOG_CORE_READ_TIMEOUT == 5.0
+
+    with pytest.raises(CoreClientError) as error:
+        CoreClient.from_settings()
+
+    assert error.value.kind is CoreErrorKind.CONFIGURATION
 
 
 def test_search_mapping_preserves_partial_fields(httpx_mock):
