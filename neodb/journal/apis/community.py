@@ -25,7 +25,7 @@ from ..managed_community import (
     unfollow_managed_account,
     upload_media,
 )
-from ..models import Piece
+from ..models import Note, Review
 
 
 class PublicationInSchema(Schema):
@@ -90,7 +90,9 @@ def publish_community_status(request, payload: PublicationInSchema):
     except ManagedCommunityError as error:
         from users.managed_community import ManagedCommunityConfigurationError
 
-        return _error(error, 409 if isinstance(error, ManagedCommunityConfigurationError) else 503)
+        return _error(
+            error, 409 if isinstance(error, ManagedCommunityConfigurationError) else 503
+        )
     return Status(201, publication_result(publication))
 
 
@@ -111,19 +113,30 @@ def upload_community_media(request, file: File[UploadedFile]):
     except ManagedCommunityError as error:
         from users.managed_community import ManagedCommunityConfigurationError
 
-        return _error(error, 409 if isinstance(error, ManagedCommunityConfigurationError) else 503)
+        return _error(
+            error, 409 if isinstance(error, ManagedCommunityConfigurationError) else 503
+        )
     return Status(201, {"media_id": media_id})
 
 
 @api.post(
     "/community/share/{piece_uuid}",
-    response={201: dict, 400: Result, 401: Result, 403: Result, 404: Result, 409: Result},
+    response={
+        201: dict,
+        400: Result,
+        401: Result,
+        403: Result,
+        404: Result,
+        409: Result,
+    },
     tags=["community"],
     auth=OAuthAccessTokenAuth(),
 )
 def share_community_piece(request, piece_uuid: str, payload: ShareInSchema):
     """Explicitly share one exact-PUBLIC Review or Note as Community content."""
-    piece = Piece.get_by_url_and_owner(piece_uuid, request.user.identity.pk)
+    piece = Review.get_by_url_and_owner(piece_uuid, request.user.identity.pk)
+    if piece is None:
+        piece = Note.get_by_url_and_owner(piece_uuid, request.user.identity.pk)
     if not piece:
         return Status(404, {"message": "Piece not found"})
     try:
