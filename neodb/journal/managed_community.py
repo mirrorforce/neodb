@@ -149,8 +149,18 @@ def _schedule_publication(_: int) -> None:
         return
 
 
-def _enqueue_publication(lease: DispatchLease) -> None:
-    enqueue_claimed_dispatch(lease, process_publication_dispatch)
+def _enqueue_publication(lease: DispatchLease) -> Any:
+    publication_uid = lease.responsibility_ref.removeprefix(
+        PUBLICATION_DISPATCH_PREFIX
+    )
+    publication_id = ManagedCommunityPublication.objects.only("pk").get(
+        uid=publication_uid
+    ).pk
+    return enqueue_claimed_dispatch(
+        lease,
+        process_publication_dispatch,
+        publication_id,
+    )
 
 
 def publication_result(publication: ManagedCommunityPublication) -> dict[str, Any]:

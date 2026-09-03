@@ -3,14 +3,19 @@ from types import SimpleNamespace
 
 import pytest
 
+from common.durable_work import claim_due_dispatches, create_dispatch
 from journal.managed_community import (
     PublicationRejectedError,
     _context_for_piece,
+    _dispatch_ref,
+    _enqueue_publication,
     _normalise_intent,
     compose_statuses,
+    process_publication_dispatch,
 )
 from journal.models import ManagedCommunityPublication, Piece
 from users.managed_community import PixelfedAccountEdgeClient
+from users.models import User
 
 
 def test_publication_intent_is_bounded_and_canonical():
@@ -179,3 +184,40 @@ def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settin
         "operation_key": "op-1",
         "repair": True,
     }
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_publication_dispatch_wiring_passes_exact_job_arguments(monkeypatch):
+    user = User.objects.create(username="publication-wiring")
+    publication = ManagedCommunityPublication.objects.create(
+        user=user,
+        operation_key="operation-1",
+        outbound_intent={"status": "hello", "media_ids": []},
+    )
+    dispatch = create_dispatch(_dispatch_ref(publication), queue="ap")
+    lease = claim_due_dispatches(
+        responsibility_prefix="managed-publication:"
+    )[0]
+
+    class RecordingQueue:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue(self, job, *args, **kwargs):
+            self.calls.append((job, args, kwargs))
+            return "rq-job"
+
+    queue = RecordingQueue()
+    monkeypatch.setattr(
+        "common.durable_work.django_rq.get_queue",
+        lambda name, commit_mode: queue,
+    )
+
+    assert _enqueue_publication(lease) == "rq-job"
+    assert queue.calls == [
+        (
+            process_publication_dispatch,
+            (dispatch.pk, lease.lease_token, publication.pk),
+            {"job_id": f"durable-dispatch-{dispatch.pk}-{lease.lease_token}"},
+        )
+    ]
