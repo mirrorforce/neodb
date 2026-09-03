@@ -34,7 +34,6 @@ class ManagedCommunityProjection(models.Model):
         related_name="managed_community_projection",
     )
     technical_handle = models.CharField(max_length=30, unique=True)
-    technical_email = models.EmailField(max_length=255)
     display_seed = models.CharField(max_length=255, blank=True)
     state = models.CharField(
         max_length=24, choices=State.choices, default=State.PENDING

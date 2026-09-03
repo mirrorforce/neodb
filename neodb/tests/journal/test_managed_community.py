@@ -1,3 +1,4 @@
+import inspect
 import io
 import json
 from types import SimpleNamespace
@@ -186,7 +187,9 @@ def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settin
     assert accepted["status_id"] == "status-1"
     assert no_effect["state"] == "no_effect"
     create_request, read_request = httpx_mock.get_requests()
-    assert create_request.url.path == "/api/v1/internal/vinylhub/status-operation/create"
+    assert (
+        create_request.url.path == "/api/v1/internal/vinylhub/status-operation/create"
+    )
     assert read_request.url.path == "/api/v1/internal/vinylhub/status-operation/read"
     assert create_request.headers["X-VinylHub-Service-Token"] == "test-service-token"
     assert json.loads(create_request.content)["external_subject"] == "subject-1"
@@ -195,6 +198,29 @@ def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settin
         "external_subject": "subject-1",
         "operation_key": "op-1",
         "repair": True,
+    }
+
+
+def test_provision_client_uses_the_accepted_account_edge_contract(httpx_mock, settings):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    httpx_mock.add_response(json={"lifecycle": "active"})
+
+    client = PixelfedAccountEdgeClient()
+    client.provision("subject-1", "vhhandle", "Display Name")
+
+    request = httpx_mock.get_request()
+    assert list(inspect.signature(client.provision).parameters) == [
+        "subject",
+        "handle",
+        "display_seed",
+    ]
+    assert request.url.path == "/api/v1/internal/vinylhub/account-edge/provision"
+    assert json.loads(request.content) == {
+        "external_subject": "subject-1",
+        "technical_handle": "vhhandle",
+        "display_seed": "Display Name",
     }
 
 
@@ -265,9 +291,7 @@ def test_status_context_uses_exact_native_route_and_validates_grouping(
     assert request.headers["Authorization"] == "Bearer managed-secret"
 
 
-def test_debug_http_managed_calls_use_account_edge_transport(
-    httpx_mock, settings
-):
+def test_debug_http_managed_calls_use_account_edge_transport(httpx_mock, settings):
     client, account = _interaction_client(settings)
     httpx_mock.add_response(json={"id": "123"})
     httpx_mock.add_response(json={"id": "917"})
@@ -293,9 +317,7 @@ def test_debug_http_managed_calls_use_account_edge_transport(
     ]
 
 
-def test_non_debug_http_account_edge_configuration_fails_closed(
-    httpx_mock, settings
-):
+def test_non_debug_http_account_edge_configuration_fails_closed(httpx_mock, settings):
     settings.DEBUG = False
     settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
     settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
@@ -526,9 +548,7 @@ def test_publication_dispatch_wiring_passes_exact_job_arguments(monkeypatch):
         outbound_intent={"status": "hello", "media_ids": []},
     )
     dispatch = create_dispatch(_dispatch_ref(publication), queue="ap")
-    lease = claim_due_dispatches(
-        responsibility_prefix="managed-publication:"
-    )[0]
+    lease = claim_due_dispatches(responsibility_prefix="managed-publication:")[0]
 
     class RecordingQueue:
         def __init__(self):
