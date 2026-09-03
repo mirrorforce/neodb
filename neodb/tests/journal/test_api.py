@@ -35,6 +35,139 @@ CACHE_SETTINGS = {
 }
 
 
+def _community_token(user, name):
+    app = Takahe.get_or_create_app(
+        name,
+        "https://example.org",
+        "https://example.org/callback",
+        owner_pk=user.identity.pk,
+    )
+    return Takahe.refresh_token(app, user.identity.pk, user.pk)
+
+
+def _post_community_share(token, piece):
+    return Client().post(
+        f"/api/community/share/{piece.uuid}",
+        data=json.dumps(
+            {
+                "operation_key": "community-share-test",
+                "visibility": "public",
+            }
+        ),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {token}",
+    )
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_community_share_public_review_uses_concrete_lookup():
+    user = User.register(email="share-review@example.com", username="sharereview")
+    item = Edition.objects.create(title="Community Share Review")
+    review = Review(
+        owner=user.identity,
+        item=item,
+        title="Public review",
+        body="Public review body",
+        visibility=0,
+    )
+    review.save(post_when_save=False, index_when_save=False)
+    token = _community_token(user, "Community Share Review API")
+
+    with (
+        patch(
+            "journal.apis.community.share_piece", return_value=object()
+        ) as share_piece,
+        patch(
+            "journal.apis.community.publication_result",
+            return_value={"publication_boundary": "reached"},
+        ),
+    ):
+        response = _post_community_share(token, review)
+
+    assert response.status_code == 201
+    assert response.json() == {"publication_boundary": "reached"}
+    assert share_piece.call_args.args[0].pk == user.pk
+    assert share_piece.call_args.args[0].identity.pk == user.identity.pk
+    assert share_piece.call_args.args[1].__class__ is Review
+    assert share_piece.call_args.args[1].pk == review.pk
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_community_share_public_note_uses_concrete_lookup():
+    user = User.register(email="share-note@example.com", username="sharenote")
+    item = Edition.objects.create(title="Community Share Note")
+    note = Note(
+        owner=user.identity,
+        item=item,
+        title="Public note",
+        content="Public note body",
+        visibility=0,
+    )
+    note.save(post_when_save=False, index_when_save=False)
+    token = _community_token(user, "Community Share Note API")
+
+    with (
+        patch(
+            "journal.apis.community.share_piece", return_value=object()
+        ) as share_piece,
+        patch(
+            "journal.apis.community.publication_result",
+            return_value={"publication_boundary": "reached"},
+        ),
+    ):
+        response = _post_community_share(token, note)
+
+    assert response.status_code == 201
+    assert response.json() == {"publication_boundary": "reached"}
+    assert share_piece.call_args.args[0].pk == user.pk
+    assert share_piece.call_args.args[0].identity.pk == user.identity.pk
+    assert share_piece.call_args.args[1].__class__ is Note
+    assert share_piece.call_args.args[1].pk == note.pk
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_community_share_private_review_uses_existing_guard():
+    user = User.register(email="share-private@example.com", username="shareprivate")
+    item = Edition.objects.create(title="Community Share Private")
+    review = Review(
+        owner=user.identity,
+        item=item,
+        title="Private review",
+        body="Private review body",
+        visibility=2,
+    )
+    review.save(post_when_save=False, index_when_save=False)
+    token = _community_token(user, "Community Share Private API")
+
+    response = _post_community_share(token, review)
+
+    assert response.status_code == 403
+    assert response.json() == {"message": "only PUBLIC Product content may be shared"}
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_community_share_other_owner_is_not_disclosed():
+    viewer = User.register(email="share-viewer@example.com", username="shareviewer")
+    owner = User.register(email="share-owner@example.com", username="shareowner")
+    item = Edition.objects.create(title="Community Share Other Owner")
+    review = Review(
+        owner=owner.identity,
+        item=item,
+        title="Owner review",
+        body="Owner review body",
+        visibility=0,
+    )
+    review.save(post_when_save=False, index_when_save=False)
+    token = _community_token(viewer, "Community Share Other Owner API")
+
+    with patch("journal.apis.community.share_piece") as share_piece:
+        response = _post_community_share(token, review)
+
+    assert response.status_code == 404
+    assert response.json() == {"message": "Piece not found"}
+    share_piece.assert_not_called()
+
+
 @pytest.mark.django_db(databases="__all__")
 @override_settings(CACHES=CACHE_SETTINGS)
 def test_calendar_api_returns_calendar_data():
