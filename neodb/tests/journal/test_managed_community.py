@@ -1,3 +1,4 @@
+import io
 import json
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -22,6 +23,7 @@ from journal.managed_community import (
 )
 from journal.models import ManagedCommunityPublication, Piece
 from users.managed_community import (
+    ManagedCommunityConfigurationError,
     ManagedCommunityRejectedError,
     PixelfedAccountEdgeClient,
 )
@@ -196,6 +198,23 @@ def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settin
     }
 
 
+def test_account_edge_client_uses_server_base_for_exact_owner_path(
+    httpx_mock, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    httpx_mock.add_response(json={"lifecycle": "active"})
+
+    PixelfedAccountEdgeClient().renew("subject-1")
+
+    request = httpx_mock.get_request()
+    assert str(request.url) == (
+        "http://community.example/api/v1/internal/vinylhub/"
+        "account-edge/credential/renew"
+    )
+
+
 def _interaction_client(settings):
     settings.DEBUG = True
     settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
@@ -244,6 +263,65 @@ def test_status_context_uses_exact_native_route_and_validates_grouping(
     assert request.method == "GET"
     assert request.url.path == "/api/v1/statuses/42/context"
     assert request.headers["Authorization"] == "Bearer managed-secret"
+
+
+def test_debug_http_managed_calls_use_account_edge_transport(
+    httpx_mock, settings
+):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_response(json={"id": "123"})
+    httpx_mock.add_response(json={"id": "917"})
+    httpx_mock.add_response(json={"ancestors": [], "descendants": []})
+    httpx_mock.add_response(json={"id": "731"})
+    httpx_mock.add_response(json={"id": "917"})
+    httpx_mock.add_response(json={"id": "918", "in_reply_to_id": "917"})
+
+    client.upload_media(account, io.BytesIO(b"image"), "image.jpg", "image/jpeg")
+    client.read_status(account, "917")
+    client.read_status_context(account, "917")
+    client.follow_account(account, "731")
+    client.favourite_status(account, "917")
+    client.reply_status(account, "917", "reply")
+
+    assert [str(request.url) for request in httpx_mock.get_requests()] == [
+        "http://community.example/api/v1/media",
+        "http://community.example/api/v1/statuses/917",
+        "http://community.example/api/v1/statuses/917/context",
+        "http://community.example/api/v1/accounts/731/follow",
+        "http://community.example/api/v1/statuses/917/favourite",
+        "http://community.example/api/v1/statuses",
+    ]
+
+
+def test_non_debug_http_account_edge_configuration_fails_closed(
+    httpx_mock, settings
+):
+    settings.DEBUG = False
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+
+    with pytest.raises(ManagedCommunityConfigurationError):
+        PixelfedAccountEdgeClient()
+
+    assert httpx_mock.get_requests() == []
+
+
+def test_non_debug_https_account_edge_transport_applies_to_managed_api(
+    httpx_mock, settings
+):
+    settings.DEBUG = False
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "https://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    httpx_mock.add_response(json={"id": "731"})
+
+    client = PixelfedAccountEdgeClient()
+    account = SimpleNamespace(
+        _api_domain="community.example", access_token="managed-secret"
+    )
+    client.follow_account(account, "731")
+
+    request = httpx_mock.get_request()
+    assert str(request.url) == "https://community.example/api/v1/accounts/731/follow"
 
 
 def test_status_context_rejects_malformed_owner_grouping(httpx_mock, settings):

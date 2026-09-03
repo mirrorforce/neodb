@@ -110,6 +110,7 @@ class PixelfedAccountEdgeClient:
             raise ManagedCommunityConfigurationError(
                 "Pixelfed Account Edge URL must use HTTPS outside DEBUG"
             )
+        self._managed_api_scheme = parsed.scheme
         self.timeout = float(getattr(settings, "PIXELFED_ACCOUNT_EDGE_TIMEOUT", 10.0))
 
     def _post(self, operation: str, payload: dict) -> dict:
@@ -227,9 +228,8 @@ class PixelfedAccountEdgeClient:
             )
         return result
 
-    @staticmethod
-    def _managed_api_url(account, path: str) -> str:
-        return f"https://{account._api_domain}{path}"
+    def _managed_api_url(self, account, path: str) -> str:
+        return f"{self._managed_api_scheme}://{account._api_domain}{path}"
 
     def _managed_request(self, method: str, account, path: str, **kwargs):
         headers = kwargs.pop("headers", {})
