@@ -149,14 +149,111 @@ def test_managed_role_coexists_but_is_not_profile_authority(monkeypatch, setting
     ordinary.access_token = "ordinary-secret"
     ordinary.save(update_fields=["access_data"])
     result.user.refresh_from_db()
+    projection.refresh_from_db()
     assert result.user.mastodon.pk == ordinary.pk
     assert ManagedVinylHubCommunityAccount.objects.filter(user=result.user).count() == 1
     managed = ManagedVinylHubCommunityAccount.objects.get(user=result.user)
     assert managed.access_token == "community-secret"
     assert "community-secret" not in str(managed.access_data)
+    assert result.projection.remote_user_id == "42"
+    assert managed.uid == "43"
+    assert managed.account_data["id"] == "43"
     assert (
         projection.__class__.objects.get(pk=projection.pk).state
         == ManagedCommunityProjection.State.PROVISIONED
+    )
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_reprovision_repairs_profile_id_without_replacing_managed_account(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("reprovision-profile-id"))
+    lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient, "provision", lambda *a: active_result("old-token")
+    )
+    process_managed_community_dispatch(
+        lease.dispatch_id, lease.lease_token, result.projection.pk
+    )
+
+    managed = ManagedVinylHubCommunityAccount.objects.get(user=result.user)
+    managed_pk = managed.pk
+    original_handle = managed.handle
+    original_domain = managed.domain
+    managed.uid = "42"
+    managed.account_data["id"] = "42"
+    managed.save(update_fields=["uid", "account_data", "modified"])
+
+    result.projection.operation = ManagedCommunityProjection.Operation.RESUME
+    result.projection.state = ManagedCommunityProjection.State.UNKNOWN
+    result.projection.save(update_fields=["operation", "state", "updated_at"])
+    result.user.is_active = False
+    result.user.save(update_fields=["is_active"])
+    dispatch = DurableDispatch.objects.get(
+        responsibility_ref=f"{DISPATCH_PREFIX}{result.projection.pk}"
+    )
+    dispatch.state = DurableDispatch.State.READY
+    dispatch.next_attempt_at = timezone.now()
+    dispatch.save(update_fields=["state", "next_attempt_at", "updated_at"])
+    resume_lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient, "resume", lambda *a: {"lifecycle": "active"}
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "renew",
+        lambda *a: active_result("new-token"),
+    )
+    process_managed_community_dispatch(
+        resume_lease.dispatch_id, resume_lease.lease_token, result.projection.pk
+    )
+
+    managed.refresh_from_db()
+    result.projection.refresh_from_db()
+    assert managed.pk == managed_pk
+    assert ManagedVinylHubCommunityAccount.objects.filter(user=result.user).count() == 1
+    assert managed.uid == "43"
+    assert managed.account_data["id"] == "43"
+    assert managed.access_token == "new-token"
+    assert managed.handle == original_handle
+    assert managed.domain == original_domain
+    assert result.projection.remote_user_id == "42"
+    assert ManagedCommunityProjection.objects.filter(
+        pk=result.projection.pk, managed_account=managed, binding=result.binding
+    ).exists()
+    assert result.projection.state == ManagedCommunityProjection.State.PROVISIONED
+
+
+@pytest.mark.django_db(databases="__all__", transaction=True)
+def test_provision_missing_profile_id_is_ambiguous_without_user_id_fallback(
+    monkeypatch, settings
+):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr("users.managed_community._schedule_projection", lambda _: None)
+    result = bootstrap_managed_identity(identity("missing-profile-id"))
+    lease = claim_due_dispatches(responsibility_prefix=DISPATCH_PREFIX)[0]
+    malformed = active_result()
+    del malformed["profile_id"]
+    monkeypatch.setattr(PixelfedAccountEdgeClient, "provision", lambda *a: malformed)
+
+    process_managed_community_dispatch(
+        lease.dispatch_id, lease.lease_token, result.projection.pk
+    )
+
+    result.projection.refresh_from_db()
+    assert result.projection.state == ManagedCommunityProjection.State.UNKNOWN
+    assert result.projection.last_error_category == "ambiguous"
+    assert not ManagedVinylHubCommunityAccount.objects.filter(user=result.user).exists()
+    assert (
+        DurableDispatch.objects.get(pk=lease.dispatch_id).state
+        == DurableDispatch.State.OBSERVATION
     )
 
 

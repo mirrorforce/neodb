@@ -581,9 +581,18 @@ def _store_provision_result(projection, result: dict) -> bool:
             "provision did not return an active projection"
         )
     token = _credential_from_result(result)
-    remote_id = str(result.get("user_id") or result.get("profile_id") or "")
-    if not remote_id:
-        raise ManagedCommunityProtocolError("provision returned no remote identity")
+    remote_user_id = result.get("user_id")
+    remote_profile_id = result.get("profile_id")
+    if remote_user_id is None or str(remote_user_id) == "":
+        raise ManagedCommunityProtocolError(
+            "provision returned no remote user identity"
+        )
+    if remote_profile_id is None or str(remote_profile_id) == "":
+        raise ManagedCommunityProtocolError(
+            "provision returned no remote profile identity"
+        )
+    remote_user_id = str(remote_user_id)
+    remote_profile_id = str(remote_profile_id)
     account = _managed_account(projection)
     domain = urlsplit(PixelfedAccountEdgeClient().base_url).netloc
     handle = str(result.get("technical_handle") or projection.technical_handle)
@@ -593,10 +602,10 @@ def _store_provision_result(projection, result: dict) -> bool:
         account = ManagedVinylHubCommunityAccount.objects.create(
             user_id=projection.user_id,
             domain=domain,
-            uid=remote_id,
+            uid=remote_profile_id,
             handle=handle,
             account_data={
-                "id": remote_id,
+                "id": remote_profile_id,
                 "username": handle.split("@", 1)[0],
                 "url": str(result.get("actor_uri") or ""),
             },
@@ -608,11 +617,22 @@ def _store_provision_result(projection, result: dict) -> bool:
         account.save(update_fields=["access_data"])
     else:
         account.access_token = token
-        account.uid = remote_id
+        account.uid = remote_profile_id
         account.handle = handle
-        account.save(update_fields=["access_data", "uid", "handle", "modified"])
+        account_data = dict(account.account_data or {})
+        account_data["id"] = remote_profile_id
+        account.account_data = account_data
+        account.save(
+            update_fields=[
+                "access_data",
+                "uid",
+                "handle",
+                "account_data",
+                "modified",
+            ]
+        )
     projection.managed_account = account
-    projection.remote_user_id = remote_id
+    projection.remote_user_id = remote_user_id
     projection.remote_profile_url = str(result.get("actor_uri") or "")[:2048]
     projection.state = ManagedCommunityProjection.State.PROVISIONED
     projection.last_error_category = ""
