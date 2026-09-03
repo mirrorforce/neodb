@@ -1,6 +1,5 @@
 """Product-owned bootstrap and lifecycle boundary for the Community edge."""
 
-import hashlib
 import logging
 import re
 import secrets
@@ -145,13 +144,12 @@ class PixelfedAccountEdgeClient:
             )
         return result
 
-    def provision(self, subject: str, handle: str, email: str, display_seed: str):
+    def provision(self, subject: str, handle: str, display_seed: str):
         return self._post(
             "provision",
             {
                 "external_subject": subject,
                 "technical_handle": handle,
-                "technical_email": email,
                 "display_seed": display_seed or None,
             },
         )
@@ -258,7 +256,9 @@ class PixelfedAccountEdgeClient:
             "POST",
             account,
             "/api/v1/media",
-            files={"file": (filename, file, content_type or "application/octet-stream")},
+            files={
+                "file": (filename, file, content_type or "application/octet-stream")
+            },
         )
         if response.status_code in {400, 401, 403, 404, 409, 422}:
             raise ManagedCommunityRejectedError("Pixelfed media upload rejected")
@@ -382,13 +382,6 @@ class ManagedIdentityResolution:
     projection: ManagedCommunityProjection
 
 
-def _technical_email(identity: VerifiedManagedIdentity) -> str:
-    digest = hashlib.sha256(
-        f"{identity.issuer}\0{identity.subject}".encode()
-    ).hexdigest()
-    return f"vh{digest}@community.invalid"
-
-
 def _display_seed(identity: VerifiedManagedIdentity) -> str:
     for key in ("nickname", "display_name"):
         value = identity.accepted_source_attributes.get(key)
@@ -485,7 +478,6 @@ def bootstrap_managed_identity(
                         user=user,
                         binding=binding,
                         technical_handle=user.username,
-                        technical_email=_technical_email(identity),
                         display_seed=_display_seed(identity),
                         state=ManagedCommunityProjection.State.PENDING,
                         operation=ManagedCommunityProjection.Operation.PROVISION,
@@ -515,7 +507,6 @@ def _ensure_existing(identity, binding, user) -> ManagedIdentityResolution:
                 user=user,
                 binding=binding,
                 technical_handle=user.username,
-                technical_email=_technical_email(identity),
                 display_seed=_display_seed(identity),
                 state=ManagedCommunityProjection.State.PENDING,
                 operation=ManagedCommunityProjection.Operation.PROVISION,
@@ -681,7 +672,6 @@ def _reprovision_after_resume_observation(
     repaired = PixelfedAccountEdgeClient().provision(
         _remote_subject(projection),
         projection.technical_handle,
-        projection.technical_email,
         projection.display_seed,
     )
     with transaction.atomic():
@@ -715,7 +705,6 @@ def process_managed_community_dispatch(
             result = client.provision(
                 subject,
                 projection.technical_handle,
-                projection.technical_email,
                 projection.display_seed,
             )
             with transaction.atomic():
