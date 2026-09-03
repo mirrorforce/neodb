@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 DISPATCH_PREFIX = "managed-community:"
 _HANDLE_RE = re.compile(r"^vh[a-z0-9]+$")
+_OWNER_ID_RE = re.compile(r"^[1-9][0-9]{0,38}$")
+MAX_REPLY_LENGTH = 5000
 _PATHS = {
     "provision": "/api/v1/internal/vinylhub/account-edge/provision",
     "read": "/api/v1/internal/vinylhub/account-edge/read",
@@ -74,6 +76,15 @@ class ManagedCommunityProtocolError(ManagedCommunityAmbiguousError):
 
 class ManagedCommunityInvariantError(ManagedCommunityError):
     pass
+
+
+def _owner_id(value, label: str) -> str:
+    if isinstance(value, bool):
+        raise ManagedCommunityRejectedError(f"{label} is invalid")
+    owner_id = str(value)
+    if not _OWNER_ID_RE.fullmatch(owner_id):
+        raise ManagedCommunityRejectedError(f"{label} is invalid")
+    return owner_id
 
 
 class PixelfedAccountEdgeClient:
@@ -195,6 +206,28 @@ class PixelfedAccountEdgeClient:
         )
 
     @staticmethod
+    def _decode_json(response, operation: str) -> dict:
+        if response.status_code in {400, 401, 403, 404, 409, 422}:
+            raise ManagedCommunityRejectedError(
+                f"Pixelfed {operation} request rejected"
+            )
+        if response.status_code < 200 or response.status_code >= 300:
+            raise ManagedCommunityAmbiguousError(
+                f"Pixelfed {operation} request is ambiguous"
+            )
+        try:
+            result = response.json()
+        except (ValueError, TypeError) as exc:
+            raise ManagedCommunityProtocolError(
+                f"Pixelfed {operation} returned invalid JSON"
+            ) from exc
+        if not isinstance(result, dict):
+            raise ManagedCommunityProtocolError(
+                f"Pixelfed {operation} returned a non-object"
+            )
+        return result
+
+    @staticmethod
     def _managed_api_url(account, path: str) -> str:
         return f"https://{account._api_domain}{path}"
 
@@ -256,7 +289,71 @@ class PixelfedAccountEdgeClient:
 
     def read_status(self, account, status_id: str):
         """Read current owner Status existence; callers interpret 404 only."""
+        status_id = _owner_id(status_id, "status_id")
         return self._managed_request("GET", account, f"/api/v1/statuses/{status_id}")
+
+    def follow_account(self, account, target_account_id: str) -> dict:
+        target_account_id = _owner_id(target_account_id, "account_id")
+        response = self._managed_request(
+            "POST", account, f"/api/v1/accounts/{target_account_id}/follow"
+        )
+        return self._decode_json(response, "account follow")
+
+    def unfollow_account(self, account, target_account_id: str) -> dict:
+        target_account_id = _owner_id(target_account_id, "account_id")
+        response = self._managed_request(
+            "POST", account, f"/api/v1/accounts/{target_account_id}/unfollow"
+        )
+        return self._decode_json(response, "account unfollow")
+
+    def favourite_status(self, account, status_id: str) -> dict:
+        status_id = _owner_id(status_id, "status_id")
+        response = self._managed_request(
+            "POST", account, f"/api/v1/statuses/{status_id}/favourite"
+        )
+        return self._decode_json(response, "status favourite")
+
+    def unfavourite_status(self, account, status_id: str) -> dict:
+        status_id = _owner_id(status_id, "status_id")
+        response = self._managed_request(
+            "POST", account, f"/api/v1/statuses/{status_id}/unfavourite"
+        )
+        return self._decode_json(response, "status unfavourite")
+
+    def read_status_context(self, account, status_id: str) -> dict:
+        status_id = _owner_id(status_id, "status_id")
+        response = self._managed_request(
+            "GET", account, f"/api/v1/statuses/{status_id}/context"
+        )
+        result = self._decode_json(response, "status context")
+        if not isinstance(result.get("ancestors"), list) or not isinstance(
+            result.get("descendants"), list
+        ):
+            raise ManagedCommunityProtocolError(
+                "Pixelfed status context returned invalid grouping"
+            )
+        if any(
+            not isinstance(status, dict)
+            for status in [*result["ancestors"], *result["descendants"]]
+        ):
+            raise ManagedCommunityProtocolError(
+                "Pixelfed status context returned invalid statuses"
+            )
+        return result
+
+    def reply_status(self, account, parent_status_id: str, text: str) -> dict:
+        parent_status_id = _owner_id(parent_status_id, "parent_status_id")
+        if not isinstance(text, str) or not text.strip():
+            raise ManagedCommunityRejectedError("reply text is required")
+        if len(text) > MAX_REPLY_LENGTH:
+            raise ManagedCommunityRejectedError("reply text is too long")
+        response = self._managed_request(
+            "POST",
+            account,
+            "/api/v1/statuses",
+            data={"status": text, "in_reply_to_id": parent_status_id},
+        )
+        return self._decode_json(response, "status reply")
 
     def read_feed(self, account, limit: int = 20):
         response = self._managed_request(

@@ -1,10 +1,15 @@
 import json
 from types import SimpleNamespace
+from urllib.parse import parse_qs
 
+import httpx
 import pytest
 
+from common.api import api
 from common.durable_work import claim_due_dispatches, create_dispatch
 from journal.managed_community import (
+    ManagedCommunityAmbiguousError,
+    ManagedCommunityProtocolError,
     PublicationRejectedError,
     _context_for_piece,
     _dispatch_ref,
@@ -12,9 +17,14 @@ from journal.managed_community import (
     _normalise_intent,
     compose_statuses,
     process_publication_dispatch,
+    read_managed_status_context,
+    reply_managed_status,
 )
 from journal.models import ManagedCommunityPublication, Piece
-from users.managed_community import PixelfedAccountEdgeClient
+from users.managed_community import (
+    ManagedCommunityRejectedError,
+    PixelfedAccountEdgeClient,
+)
 from users.models import User
 
 
@@ -184,6 +194,249 @@ def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settin
         "operation_key": "op-1",
         "repair": True,
     }
+
+
+def _interaction_client(settings):
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    return PixelfedAccountEdgeClient(), SimpleNamespace(
+        _api_domain="community.example", access_token="managed-secret"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "argument"),
+    [
+        ("follow_account", "/api/v1/accounts/731/follow", "731"),
+        ("unfollow_account", "/api/v1/accounts/731/unfollow", "731"),
+        ("favourite_status", "/api/v1/statuses/917/favourite", "917"),
+        ("unfavourite_status", "/api/v1/statuses/917/unfavourite", "917"),
+    ],
+)
+def test_managed_mutations_use_exact_native_route_and_bearer(
+    httpx_mock, settings, method, path, argument
+):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_response(json={"id": argument})
+
+    result = getattr(client, method)(account, argument)
+
+    request = httpx_mock.get_request()
+    assert request.method == "POST"
+    assert request.url.path == path
+    assert request.headers["Authorization"] == "Bearer managed-secret"
+    assert result == {"id": argument}
+
+
+def test_status_context_uses_exact_native_route_and_validates_grouping(
+    httpx_mock, settings
+):
+    client, account = _interaction_client(settings)
+    payload = {
+        "ancestors": [{"id": "41"}],
+        "descendants": [{"id": "43"}],
+    }
+    httpx_mock.add_response(json=payload)
+
+    assert client.read_status_context(account, "42") == payload
+    request = httpx_mock.get_request()
+    assert request.method == "GET"
+    assert request.url.path == "/api/v1/statuses/42/context"
+    assert request.headers["Authorization"] == "Bearer managed-secret"
+
+
+def test_status_context_rejects_malformed_owner_grouping(httpx_mock, settings):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_response(json={"ancestors": [], "descendants": {}})
+
+    with pytest.raises(ManagedCommunityProtocolError):
+        client.read_status_context(account, "42")
+
+
+def test_text_reply_preserves_exact_parent_and_text_without_idempotency_key(
+    httpx_mock, settings
+):
+    client, account = _interaction_client(settings)
+    text = "  exact reply text  "
+    httpx_mock.add_response(json={"id": "918", "in_reply_to_id": "917"})
+
+    result = client.reply_status(account, "917", text)
+
+    request = httpx_mock.get_request()
+    assert request.method == "POST"
+    assert request.url.path == "/api/v1/statuses"
+    assert request.headers["Authorization"] == "Bearer managed-secret"
+    assert parse_qs(request.content.decode()) == {
+        "status": [text],
+        "in_reply_to_id": ["917"],
+    }
+    assert "Idempotency-Key" not in request.headers
+    assert result["in_reply_to_id"] == "917"
+
+
+@pytest.mark.parametrize("text", ["", "   ", "x" * 5001])
+def test_text_reply_rejects_empty_or_oversized_text(httpx_mock, settings, text):
+    client, account = _interaction_client(settings)
+
+    with pytest.raises(ManagedCommunityRejectedError):
+        client.reply_status(account, "917", text)
+
+    assert httpx_mock.get_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("follow_account", ("731",)),
+        ("unfollow_account", ("731",)),
+        ("favourite_status", ("917",)),
+        ("unfavourite_status", ("917",)),
+        ("read_status_context", ("917",)),
+        ("reply_status", ("917", "reply")),
+    ],
+)
+def test_managed_interactions_preserve_owner_4xx_without_retry(
+    httpx_mock, settings, method, args
+):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_response(status_code=400)
+
+    with pytest.raises(ManagedCommunityRejectedError):
+        getattr(client, method)(account, *args)
+
+    assert len(httpx_mock.get_requests()) == 1
+
+
+@pytest.mark.parametrize(
+    ("method", "args"),
+    [
+        ("follow_account", ("731",)),
+        ("unfollow_account", ("731",)),
+        ("favourite_status", ("917",)),
+        ("unfavourite_status", ("917",)),
+        ("read_status_context", ("917",)),
+        ("reply_status", ("917", "reply")),
+    ],
+)
+def test_managed_interactions_keep_5xx_ambiguous_without_retry(
+    httpx_mock, settings, method, args
+):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_response(status_code=503)
+
+    with pytest.raises(ManagedCommunityAmbiguousError):
+        getattr(client, method)(account, *args)
+
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_managed_reply_transport_timeout_is_ambiguous_without_retry(
+    httpx_mock, settings
+):
+    client, account = _interaction_client(settings)
+    httpx_mock.add_exception(httpx.ReadTimeout("timeout"))
+
+    with pytest.raises(ManagedCommunityAmbiguousError):
+        client.reply_status(account, "917", "reply")
+
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_owner_id_validation_blocks_path_injection(httpx_mock, settings):
+    client, account = _interaction_client(settings)
+
+    with pytest.raises(ManagedCommunityRejectedError):
+        client.follow_account(account, "731/../../statuses")
+
+    assert httpx_mock.get_requests() == []
+
+
+def test_interaction_api_routes_require_product_bearer_auth():
+    schema = api.get_openapi_schema()
+    routes = {
+        "/api/community/account/{account_id}/follow": "post",
+        "/api/community/account/{account_id}/unfollow": "post",
+        "/api/community/status/{status_id}/favourite": "post",
+        "/api/community/status/{status_id}/unfavourite": "post",
+        "/api/community/status/{status_id}/context": "get",
+        "/api/community/status/{parent_status_id}/reply": "post",
+    }
+
+    for path, method in routes.items():
+        assert schema["paths"][path][method]["security"] == [
+            {"OAuthAccessTokenAuth": []}
+        ]
+
+
+def test_status_context_composes_ancestors_and_descendants_in_one_batch(
+    monkeypatch, settings
+):
+    _, account = _interaction_client(settings)
+    owner_context = {
+        "ancestors": [{"id": "41"}],
+        "descendants": [{"id": "43"}, {"id": "44"}],
+    }
+    compose_calls = []
+
+    monkeypatch.setattr(
+        "journal.managed_community._managed_projection",
+        lambda user: (None, account),
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "read_status_context",
+        lambda self, current_account, status_id: owner_context,
+    )
+
+    def compose(statuses):
+        compose_calls.append(statuses)
+        return [{**status, "composed": True} for status in statuses]
+
+    monkeypatch.setattr("journal.managed_community.compose_statuses", compose)
+
+    result = read_managed_status_context(SimpleNamespace(), "42")
+
+    assert compose_calls == [[{"id": "41"}, {"id": "43"}, {"id": "44"}]]
+    assert result == {
+        "ancestors": [{"id": "41", "composed": True}],
+        "descendants": [
+            {"id": "43", "composed": True},
+            {"id": "44", "composed": True},
+        ],
+    }
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_text_reply_does_not_create_product_records(monkeypatch, settings):
+    user = User.objects.create(username="reply-owner")
+    _, account = _interaction_client(settings)
+    before_publications = ManagedCommunityPublication.objects.count()
+    before_pieces = Piece.objects.count()
+
+    monkeypatch.setattr(
+        "journal.managed_community._managed_projection",
+        lambda current_user: (None, account),
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "reply_status",
+        lambda self, current_account, parent_status_id, text: {
+            "id": "918",
+            "in_reply_to_id": parent_status_id,
+            "content": text,
+        },
+    )
+
+    result = reply_managed_status(user, "917", "reply")
+
+    assert result == {
+        "id": "918",
+        "in_reply_to_id": "917",
+        "content": "reply",
+    }
+    assert ManagedCommunityPublication.objects.count() == before_publications
+    assert Piece.objects.count() == before_pieces
 
 
 @pytest.mark.django_db(databases="__all__", transaction=True)
