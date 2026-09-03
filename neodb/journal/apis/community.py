@@ -4,15 +4,25 @@ from ninja import Field, File, Schema, Status
 from ninja.files import UploadedFile
 
 from common.api import OAuthAccessTokenAuth, Result, api
+from users.managed_community import (
+    ManagedCommunityConfigurationError,
+    ManagedCommunityRejectedError,
+)
 
 from ..managed_community import (
     ManagedCommunityError,
     PublicationRejectedError,
     create_publication,
+    favourite_managed_status,
+    follow_managed_account,
     publication_result,
     read_managed_feed,
     read_managed_status,
+    read_managed_status_context,
+    reply_managed_status,
     share_piece,
+    unfavourite_managed_status,
+    unfollow_managed_account,
     upload_media,
 )
 from ..models import Piece
@@ -36,6 +46,14 @@ class ShareInSchema(Schema):
 
 def _error(error: Exception, code: int = 400):
     return Status(code, {"message": str(error)})
+
+
+def _interaction_error(error: ManagedCommunityError):
+    if isinstance(error, ManagedCommunityRejectedError):
+        return _error(error, 400)
+    if isinstance(error, ManagedCommunityConfigurationError):
+        return _error(error, 409)
+    return _error(error, 503)
 
 
 @api.post(
@@ -149,3 +167,86 @@ def community_status(request, status_id: str):
         return _error(error, 404)
     except ManagedCommunityError as error:
         return _error(error, 503)
+
+
+@api.post(
+    "/community/account/{account_id}/follow",
+    response={200: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_follow(request, account_id: str):
+    try:
+        return follow_managed_account(request.user, account_id)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+
+
+@api.post(
+    "/community/account/{account_id}/unfollow",
+    response={200: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_unfollow(request, account_id: str):
+    try:
+        return unfollow_managed_account(request.user, account_id)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+
+
+@api.post(
+    "/community/status/{status_id}/favourite",
+    response={200: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_favourite(request, status_id: str):
+    try:
+        return favourite_managed_status(request.user, status_id)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+
+
+@api.post(
+    "/community/status/{status_id}/unfavourite",
+    response={200: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_unfavourite(request, status_id: str):
+    try:
+        return unfavourite_managed_status(request.user, status_id)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+
+
+@api.get(
+    "/community/status/{status_id}/context",
+    response={200: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_status_context(request, status_id: str):
+    try:
+        return read_managed_status_context(request.user, status_id)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+
+
+class ReplyInSchema(Schema):
+    text: str
+
+
+@api.post(
+    "/community/status/{parent_status_id}/reply",
+    response={201: dict, 400: Result, 401: Result, 409: Result, 503: Result},
+    tags=["community"],
+    auth=OAuthAccessTokenAuth(),
+)
+def community_reply(request, parent_status_id: str, payload: ReplyInSchema):
+    try:
+        result = reply_managed_status(request.user, parent_status_id, payload.text)
+    except ManagedCommunityError as error:
+        return _interaction_error(error)
+    return Status(201, result)

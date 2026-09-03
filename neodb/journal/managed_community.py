@@ -635,3 +635,45 @@ def read_managed_status(user: User, status_id: str) -> dict[str, Any]:
     if not isinstance(status, dict):
         raise ManagedCommunityProtocolError("managed Status returned a non-object")
     return compose_statuses([status])[0]
+
+
+def follow_managed_account(user: User, target_account_id: str) -> dict[str, Any]:
+    _, account = _managed_projection(user)
+    return PixelfedAccountEdgeClient().follow_account(account, target_account_id)
+
+
+def unfollow_managed_account(user: User, target_account_id: str) -> dict[str, Any]:
+    _, account = _managed_projection(user)
+    return PixelfedAccountEdgeClient().unfollow_account(account, target_account_id)
+
+
+def favourite_managed_status(user: User, status_id: str) -> dict[str, Any]:
+    _, account = _managed_projection(user)
+    return PixelfedAccountEdgeClient().favourite_status(account, status_id)
+
+
+def unfavourite_managed_status(user: User, status_id: str) -> dict[str, Any]:
+    _, account = _managed_projection(user)
+    return PixelfedAccountEdgeClient().unfavourite_status(account, status_id)
+
+
+def read_managed_status_context(
+    user: User, status_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    _, account = _managed_projection(user)
+    context = PixelfedAccountEdgeClient().read_status_context(account, status_id)
+    ancestors = context["ancestors"]
+    descendants = context["descendants"]
+    composed = compose_statuses([*ancestors, *descendants])
+    ancestor_count = len(ancestors)
+    return {
+        "ancestors": composed[:ancestor_count],
+        "descendants": composed[ancestor_count:],
+    }
+
+
+def reply_managed_status(
+    user: User, parent_status_id: str, text: str
+) -> dict[str, Any]:
+    _, account = _managed_projection(user)
+    return PixelfedAccountEdgeClient().reply_status(account, parent_status_id, text)
