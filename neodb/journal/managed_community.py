@@ -595,10 +595,16 @@ def compose_statuses(statuses: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ).values("remote_status_id", "piece_id")
     )
     piece_ids = {row["piece_id"] for row in publications if row["piece_id"]}
-    pieces = {
-        str(piece.pk): piece
-        for piece in Piece.objects.filter(pk__in=piece_ids).select_related("item")
-    }
+    pieces = {}
+    for model in (Review, Note):
+        pieces.update(
+            {
+                str(piece.pk): piece
+                for piece in model.objects.filter(pk__in=piece_ids).select_related(
+                    "item"
+                )
+            }
+        )
     context_by_status: dict[str, dict[str, Any]] = {}
     for row in publications:
         piece = pieces.get(str(row["piece_id"]))

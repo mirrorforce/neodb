@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
+from catalog.models import Edition
 from common.api import api
 from common.durable_work import claim_due_dispatches, create_dispatch
 from journal.managed_community import (
@@ -19,10 +20,11 @@ from journal.managed_community import (
     _normalise_intent,
     compose_statuses,
     process_publication_dispatch,
+    read_managed_status,
     read_managed_status_context,
     reply_managed_status,
 )
-from journal.models import ManagedCommunityPublication, Piece
+from journal.models import ManagedCommunityPublication, Note, Piece, Review
 from users.managed_community import (
     ManagedCommunityConfigurationError,
     ManagedCommunityRejectedError,
@@ -115,7 +117,7 @@ def test_compose_statuses_batches_binding_and_preserves_unbound(monkeypatch):
             publication_calls.append(fields)
             return publication_rows
 
-    class PieceQuery:
+    class ContentQuery:
         def select_related(self, *fields):
             content_calls.append(fields)
             return [public_piece, private_piece]
@@ -126,9 +128,14 @@ def test_compose_statuses_batches_binding_and_preserves_unbound(monkeypatch):
         lambda **kwargs: ValuesQuery(),
     )
     monkeypatch.setattr(
-        Piece.objects,
+        Review.objects,
         "filter",
-        lambda **kwargs: PieceQuery(),
+        lambda **kwargs: ContentQuery(),
+    )
+    monkeypatch.setattr(
+        Note.objects,
+        "filter",
+        lambda **kwargs: ContentQuery(),
     )
 
     statuses = [
@@ -139,10 +146,92 @@ def test_compose_statuses_batches_binding_and_preserves_unbound(monkeypatch):
     result = compose_statuses(statuses)
 
     assert len(publication_calls) == 1
-    assert len(content_calls) == 1
+    assert len(content_calls) == 2
     assert "vinyl_context" in result[0]
     assert "vinyl_context" not in result[1]
     assert result[2] == statuses[2]
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_compose_statuses_real_orm_and_status_readback(monkeypatch, settings):
+    user = User.register(email="community-readback@example.com", username="readback")
+    item = Edition.objects.create(title="Readback Release")
+    public_review = Review(
+        owner=user.identity,
+        item=item,
+        title="Public review",
+        body="A public review.",
+        visibility=0,
+        local=False,
+    )
+    public_review.save(post_when_save=False, index_when_save=False)
+    private_note = Note(
+        owner=user.identity,
+        item=item,
+        title="Private note",
+        content="A private note.",
+        visibility=2,
+        local=False,
+    )
+    private_note.save(post_when_save=False, index_when_save=False)
+    ManagedCommunityPublication.objects.create(
+        user=user,
+        operation_key="readback-public",
+        piece=public_review,
+        context_item=item,
+        state=ManagedCommunityPublication.State.PUBLISHED,
+        remote_status_id="status-public",
+    )
+    ManagedCommunityPublication.objects.create(
+        user=user,
+        operation_key="readback-private",
+        piece=private_note,
+        context_item=item,
+        state=ManagedCommunityPublication.State.PUBLISHED,
+        remote_status_id="status-private",
+    )
+    ManagedCommunityPublication.objects.create(
+        user=user,
+        operation_key="readback-unbound",
+        state=ManagedCommunityPublication.State.PUBLISHED,
+        remote_status_id="status-unbound",
+    )
+    statuses = [
+        {"id": "status-public", "content": "bound"},
+        {"id": "status-private", "content": "private"},
+        {"id": "status-unbound", "content": "unbound"},
+    ]
+
+    composed = compose_statuses(statuses)
+
+    assert composed[0]["vinyl_context"]["piece_uid"] == str(public_review.uid)
+    assert composed[0]["vinyl_context"]["item"] == {
+        "uuid": str(item.uuid),
+        "title": item.display_title,
+    }
+    assert "vinyl_context" not in composed[1]
+    assert composed[2] == statuses[2]
+
+    settings.DEBUG = True
+    settings.PIXELFED_ACCOUNT_EDGE_URL = "http://community.example"
+    settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "test-service-token"
+    monkeypatch.setattr(
+        "journal.managed_community._managed_projection",
+        lambda current_user: (None, object()),
+    )
+    monkeypatch.setattr(
+        PixelfedAccountEdgeClient,
+        "read_status",
+        lambda self, account, status_id: SimpleNamespace(
+            status_code=200,
+            json=lambda: statuses[0],
+        ),
+    )
+
+    readback = read_managed_status(user, "status-public")
+
+    assert readback["id"] == "status-public"
+    assert readback["vinyl_context"] == composed[0]["vinyl_context"]
 
 
 def test_status_operation_client_uses_confidential_stable_key(httpx_mock, settings):
