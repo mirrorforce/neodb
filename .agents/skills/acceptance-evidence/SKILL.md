@@ -15,6 +15,36 @@ Capture evidence in this order:
 4. Validation: exact commands and outcomes for native pre-commit/configuration checks, Django startup/system checks, migration checks or `neodb-init` smoke, targeted tests, and runtime/Compose checks. Distinguish PASS, FAIL, and NOT RUN with the reason.
 5. Review notes: accepted seams, baseline drift, remaining unknowns, and the next integration gate.
 
+## T1/T2 admission gate
+
+For any runtime-dependent T1 or T2 evidence, require the admission method in
+`.agents/skills/test-environment/SKILL.md` to have run before the first
+runtime-dependent command. Preserve this complete record:
+
+```text
+ENVIRONMENT_ADMISSION = PASS / BLOCKED
+VALIDATION_TIER
+RUNNER_PLATFORM
+RUNNER_IDENTITY
+SOURCE_SHA
+SOURCE_TREE
+DEPENDENCY_IDENTITY
+TEST_SOURCE_AVAILABLE
+DEV_TEST_DEPS_AVAILABLE
+CWD
+CANONICAL_COMMAND
+REQUIRED_SERVICES
+SERVICE_IDENTITIES
+SERVICE_HEALTH
+```
+
+Refuse to promote a tier when the record is missing, incomplete, contradictory,
+or has `ENVIRONMENT_ADMISSION != PASS`. Such evidence is `BLOCKED` or
+`NOT_RUN`, not `PASS`. T0 static evidence has no runtime claim and cannot be
+promoted to T1; T1 evidence cannot be promoted to T2. `T1 PASS != T2 PASS`.
+Do not copy volatile service or version matrices into the evidence Skill or
+durable guidance; identify current identities in the per-run record.
+
 Each evidence packet must identify, where applicable:
 
 ```text

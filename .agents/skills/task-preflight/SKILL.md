@@ -21,23 +21,36 @@ Before execution, identify the validation tier:
 - `T1 NEOdb TEST`: use the current source/head and current dependency lock with repository CI-native test conventions. Read the current `.github/workflows/tests.yml` and current Compose/runtime owner authority first; record required database, cache, and search services, cwd, env inputs, and the canonical command before execution. CI search-service identity and admitted runtime identity may differ; do not silently substitute one for the other.
 - `T2 OWNER INTEGRATION`: use only exact owner/task-admitted runtime and provider identities and report integration evidence for those identities.
 
-`T1 PASS != T2 PASS`.
+When T1 or T2 is requested, dispatch `.agents/skills/test-environment/SKILL.md`
+after this preflight and before the first runtime-dependent command. Do not
+run a test, Django/runtime, service, Compose, or owner-provider command as a
+tier claim until its complete admission record exists and
+`ENVIRONMENT_ADMISSION = PASS`. If admission is `BLOCKED`, continue only
+authorized T0/static work and record the requested tier as `BLOCKED` or
+`NOT_RUN`. `T1 PASS != T2 PASS`.
 
 The validation application/runtime must correspond to the current task source/head. A stale prior-lane image is not acceptable merely because it starts. Reuse an image only with exact source provenance, dependency compatibility, and claim-compatible runtime identity; when the current Dockerfile supports it, prefer the full task SHA as the build identity. Do not redesign Docker packaging.
 
-Before executing T1 tests, establish and record:
+The admission record must establish and record before the first runtime-dependent T1/T2 command:
 
 ```text
-TEST_RUNNER_IDENTITY
+ENVIRONMENT_ADMISSION
+VALIDATION_TIER
 RUNNER_PLATFORM
-TEST_SOURCE_AVAILABILITY
-DEV_TEST_DEPENDENCY_AVAILABILITY
-SERVICE_PREREQUISITES
+RUNNER_IDENTITY
+SOURCE_SHA
+SOURCE_TREE
+DEPENDENCY_IDENTITY
+TEST_SOURCE_AVAILABLE
+DEV_TEST_DEPS_AVAILABLE
 CWD
-CANONICAL_TEST_COMMAND
+CANONICAL_COMMAND
+REQUIRED_SERVICES
+SERVICE_IDENTITIES
+SERVICE_HEALTH
 ```
 
-The runner platform comes from the current repository-native test authority; do not assume the primary host OS is valid. If current source or test dependencies require Linux APIs such as `fcntl`, native Windows is `PLATFORM_MISMATCH`, not a reason to patch Product source. Do not assume a production/runtime Docker image is a test image: inspect the current `Dockerfile`, `.dockerignore`, and `pyproject.toml` dependency groups before selecting an image. A containerized T1 runner must provide the current task source and test files, current dependency identity, dev/test dependencies, repository-native cwd, and repository-native command. If the production image intentionally excludes test dependencies or test files, use a current-source Linux dev/test-compatible environment; do not discover this through a failed pytest invocation. Continue to read the current workflow authority and declare its required services before execution.
+The runner platform comes from the current repository-native test authority; do not assume the primary host OS is valid. If current source or test dependencies require Linux APIs such as `fcntl`, native Windows is `PLATFORM_MISMATCH`, not a reason to patch Product source. Do not assume a production/runtime Docker image is a test image: inspect the current `Dockerfile`, `.dockerignore`, and `pyproject.toml` dependency groups before selecting an image. A containerized T1 runner must provide the current task source and test files, current dependency identity, dev/test dependencies, repository-native cwd, and repository-native command. If the production image intentionally excludes test dependencies or test files, use a current-source Linux dev/test-compatible environment; do not discover this through a failed pytest invocation. Continue to read the current workflow authority and declare its required services before execution. The full admission procedure and bounded failure labels are defined by `test-environment`; do not weaken it or copy volatile service/version values into this Skill.
 
 ## Baseline versus task-head validation
 
