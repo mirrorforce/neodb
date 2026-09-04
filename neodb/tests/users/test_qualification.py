@@ -1,6 +1,9 @@
 import json
+import os
 import stat
 from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -145,3 +148,64 @@ def test_qualification_bootstrap_converges_and_hands_off_auth(
     assert Review.objects.count() == 0
     assert Note.objects.count() == 0
     assert Post.objects.count() == 0
+
+
+@pytest.mark.all_databases
+def test_qualification_preserves_non_command_error_after_cleanup(monkeypatch, tmp_path):
+    from users.management.commands import vinylhub_qualify
+
+    monkeypatch.setenv("NEODB_QUALIFICATION_MODE", "disposable")
+    token = "synthetic-qualification-token"
+    token_owner = SimpleNamespace(identity=SimpleNamespace(pk=314))
+    auth_token = SimpleNamespace(pk=2718)
+    get_token = Mock(return_value=auth_token)
+    revoke_token = Mock(return_value=True)
+    close_handoff = Mock(wraps=os.close)
+    original_failure = ValueError("synthetic qualification failure")
+
+    monkeypatch.setattr(
+        vinylhub_qualify,
+        "_wait_for_community",
+        lambda identity, max_wait: SimpleNamespace(user=token_owner),
+    )
+    monkeypatch.setattr(vinylhub_qualify, "_ensure_item", Mock())
+    monkeypatch.setattr(vinylhub_qualify, "_create_product_auth", lambda user: token)
+    monkeypatch.setattr(
+        vinylhub_qualify,
+        "_write_handoff",
+        Mock(side_effect=original_failure),
+    )
+    monkeypatch.setattr(vinylhub_qualify.Takahe, "get_token", get_token)
+    monkeypatch.setattr(vinylhub_qualify.Takahe, "revoke_token", revoke_token)
+    monkeypatch.setattr(vinylhub_qualify.os, "close", close_handoff)
+
+    handoff = tmp_path / "failed-token"
+    with pytest.raises(ValueError, match="synthetic qualification failure") as exc_info:
+        call_command(
+            "vinylhub_qualify",
+            "--qualification",
+            "--auth-handoff",
+            str(handoff),
+        )
+
+    assert type(exc_info.value) is ValueError
+    assert str(exc_info.value) == str(original_failure)
+    assert exc_info.value.__traceback__ is not None
+    assert any(
+        frame.tb_frame.f_code.co_filename == str(Path(vinylhub_qualify.__file__))
+        for frame in _traceback_frames(exc_info.value.__traceback__)
+    )
+    assert "VinylHub qualification bootstrap failed" not in str(exc_info.value)
+    assert not handoff.exists()
+    close_handoff.assert_called_once()
+    get_token.assert_called_once_with(token)
+    revoke_token.assert_called_once_with(auth_token.pk, token_owner.identity.pk)
+    assert Review.objects.count() == 0
+    assert Note.objects.count() == 0
+    assert Post.objects.count() == 0
+
+
+def _traceback_frames(traceback):
+    while traceback:
+        yield traceback
+        traceback = traceback.tb_next
