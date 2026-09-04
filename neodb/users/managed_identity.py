@@ -97,6 +97,8 @@ def bootstrap_managed_identity(
     first logins. This function has no Community/Core/provider side effects.
     """
 
+    from .managed_community import ensure_managed_community_account
+
     for _ in range(8):
         try:
             with transaction.atomic():
@@ -114,6 +116,7 @@ def bootstrap_managed_identity(
                         subject=identity.subject,
                         user=user,
                     )
+                ensure_managed_community_account(binding)
             return ManagedIdentityResolution(identity, binding, user)
         except IntegrityError:
             resolved = resolve_managed_identity(identity)
@@ -130,9 +133,13 @@ def login_managed_identity(
     resolution = resolve_managed_identity(identity)
     if resolution.bootstrap_required:
         return resolution
+    assert resolution.binding is not None
     assert resolution.user is not None
     if not resolution.user.is_active:
         raise ManagedIdentityInvariantError("managed identity user is inactive")
+    from .managed_community import ensure_managed_community_account
+
+    ensure_managed_community_account(resolution.binding)
     auth.login(request, resolution.user, backend="mastodon.auth.OAuth2Backend")
     return resolution
 
