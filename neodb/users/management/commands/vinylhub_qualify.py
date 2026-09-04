@@ -278,7 +278,7 @@ class Command(SiteCommand):
             _remove_handoff(handoff_path)
             if isinstance(exc, CommandError):
                 raise
-            raise CommandError("VinylHub qualification bootstrap failed") from None
+            raise
         finally:
             if not handoff_written:
                 _remove_handoff(handoff_path)
