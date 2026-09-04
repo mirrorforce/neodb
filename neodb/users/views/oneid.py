@@ -36,5 +36,4 @@ def oneid_callback(request: HttpRequest) -> HttpResponseBase:
 
     bootstrap_managed_identity(identity)
     login_managed_identity(request, identity)
-    next_url = request.session.pop("next_url", "/")
-    return redirect(next_url)
+    return redirect("/")

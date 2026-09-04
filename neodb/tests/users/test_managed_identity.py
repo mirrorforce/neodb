@@ -187,6 +187,24 @@ def test_invalid_verified_identity_is_rejected(monkeypatch, updates, error):
         client.verify_callback(callback)
 
 
+def test_wrong_nonce_is_rejected(monkeypatch):
+    key, client, factory, start_request, pending, _ = _client_and_requests(monkeypatch)
+    token = _id_token(key, _claims(pending, nonce="wrong-nonce"))
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: _response(
+            "POST", TOKEN_ENDPOINT, 200, {"id_token": token}
+        ),
+    )
+    callback = factory.get(
+        "/account/oneid/callback", {"state": pending["state"], "code": "code"}
+    )
+    callback.session = start_request.session
+    with pytest.raises(OneIDValidationError):
+        client.verify_callback(callback)
+
+
 def test_bad_signature_and_state_fail_closed(monkeypatch):
     signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     wrong_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
