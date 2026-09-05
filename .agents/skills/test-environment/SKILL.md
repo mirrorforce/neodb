@@ -69,7 +69,7 @@ Project Python compatibility is `pyproject.toml requires-python = >=3.14,<3.15`.
 `.python-version = 3.14` means a minor-line selector, not an exact patch pin.
 For a Windows, macOS, or Linux host used for repository tooling, compatible
 CPython 3.14.x is admissible. Record the actual host Python patch and build as
-`RUNNER_IDENTITY` evidence; it is not a hard requirement by default. The
+`RUNNER_IDENTITY` evidence; it is not a hard requirement by default.
 The canonical machine-local NeoDB OWNER TESTS runner is the Linux Docker container above,
 so a Windows host Python import failure is a platform mismatch, not a reason to
 change NeoDB source for Windows compatibility.
