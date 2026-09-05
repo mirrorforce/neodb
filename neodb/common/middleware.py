@@ -29,18 +29,24 @@ class DummySession(dict):
 
 class APIAwareSessionMiddleware(SessionMiddleware):
     """
-    SessionMiddleware that skips session persistence for API requests.
-    API requests get a DummySession that behaves like an empty dict but never saves.
+    SessionMiddleware that reads, but never persists, API request sessions.
+
+    Native Product APIs can use the existing first-party Django session for
+    authentication when no Authorization header is present. Explicitly
+    credentialed API requests get an empty non-persistent session so browser
+    session state cannot participate in bearer authentication.
     """
 
     def process_request(self, request):
-        if request.path.startswith("/api/"):
+        if request.path.startswith("/api/") and "HTTP_AUTHORIZATION" in request.META:
             request.session = DummySession()
             return
         super().process_request(request)
 
     def process_response(self, request, response):
-        if isinstance(request.session, DummySession):
+        if isinstance(getattr(request, "session", None), DummySession):
+            return response
+        if request.path.startswith("/api/"):
             return response
         return super().process_response(request, response)
 

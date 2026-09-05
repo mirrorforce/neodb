@@ -3,12 +3,14 @@ from typing import Any
 from django.conf import settings
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
+from django.middleware.csrf import CsrfViewMiddleware
 from django.utils.functional import lazy
 from loguru import logger
 from ninja import Field, NinjaAPI, Schema, Status
-from pydantic import AliasChoices
+from ninja.errors import HttpError
 from ninja.pagination import PageNumberPagination as NinjaPageNumberPagination
 from ninja.security import HttpBearer
+from pydantic import AliasChoices
 
 from catalog.models import Item
 from common.models import SiteConfig
@@ -19,7 +21,46 @@ PERMITTED_WRITE_METHODS = ["PUT", "POST", "DELETE", "PATCH"]
 PERMITTED_READ_METHODS = ["GET", "HEAD", "OPTIONS"]
 
 
+def _csrf_get_response(request: HttpRequest) -> HttpResponse:
+    return HttpResponse()
+
+
+_csrf_middleware = CsrfViewMiddleware(_csrf_get_response)
+
+
 class OAuthAccessTokenAuth(HttpBearer):
+    def __call__(self, request: HttpRequest) -> bool:
+        # An Authorization header is authoritative. In particular, a bad or
+        # revoked bearer must not become a session-authenticated request.
+        if "HTTP_AUTHORIZATION" in request.META:
+            return super().__call__(request) or False
+        return self._authenticate_session(request)
+
+    def _authenticate_session(self, request: HttpRequest) -> bool:
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        identity = getattr(user, "identity", None)
+        if not identity or identity.deleted:
+            return False
+        request.__dict__["identity_id"] = identity.pk
+        self._check_session_csrf(request)
+        return True
+
+    @staticmethod
+    def _check_session_csrf(request: HttpRequest) -> None:
+        if request.method in (*PERMITTED_READ_METHODS, "TRACE"):
+            return
+
+        # Django Ninja deliberately marks API views csrf_exempt so bearer
+        # clients do not need a browser cookie. Re-run Django's normal check
+        # only for the session-authenticated branch.
+        def callback(*args: Any, **kwargs: Any) -> HttpResponse:
+            return HttpResponse()
+
+        if _csrf_middleware.process_view(request, callback, (), {}) is not None:
+            raise HttpError(403, "CSRF check failed")
+
     def authenticate(self, request, token) -> bool:
         if not token:
             logger.debug("API auth: no access token provided")
@@ -64,9 +105,8 @@ class OptionalOAuthAccessTokenAuth(OAuthAccessTokenAuth):
     """Auth that processes Bearer token if present, but allows anonymous access."""
 
     def __call__(self, request: HttpRequest) -> bool:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header:
-            return True  # No token provided, allow anonymous access
+        if "HTTP_AUTHORIZATION" not in request.META:
+            return self._authenticate_session(request) or True
         return super().__call__(request) or False
 
 
