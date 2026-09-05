@@ -15,6 +15,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.8@sha256:67b2bcccdc103d608727d1b577e58008ef
 COPY neodb /neodb
 COPY takahe /takahe
 COPY misc /misc
+COPY docs/lexicons /docs/lexicons
 COPY pyproject.toml uv.lock /neodb/
 
 RUN echo "${buildver}" > /etc/neodb_version \
@@ -50,6 +51,7 @@ COPY --from=build /etc/neodb_version /etc/neodb_version
 COPY --from=build /etc/neodb_tree /etc/neodb_tree
 COPY --from=build /neodb /neodb
 COPY --from=build /takahe /takahe
+COPY --from=build /docs /docs
 COPY --from=build /neodb-venv /neodb-venv
 
 WORKDIR /neodb

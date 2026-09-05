@@ -1,6 +1,7 @@
 **.dockerignore
 **.DS_Store
 **.env
+**.coverage
 **.git
 **.github
 **.gitignore
@@ -11,6 +12,7 @@
 **.venv
 **.vscode
 **__pycache__
+**coverage.xml
 **pytest.ini
 .data
 codecov.yml
@@ -37,3 +39,5 @@ takahe/tests
 !neodb/test_data/**
 !neodb/tests
 !neodb/tests/**
+!docs/lexicons
+!docs/lexicons/**
