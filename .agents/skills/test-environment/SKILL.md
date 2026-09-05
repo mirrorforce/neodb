@@ -64,8 +64,8 @@ routine test credential. Never print the plaintext key or full
 `NEODB_SEARCH_URL`.
 
 The absence of a local Typesense container is **not** a T1 blocker for this
-profile. Native `compose.yml` may retain an upstream runtime Typesense default;
-that service is not the machine-local VinylHub T1 authority.
+profile. Native `compose.yml` has its own pinned local Typesense 30.1 runtime
+service; that service is not the machine-local VinylHub T1 authority.
 
 The canonical commands, from `neodb`, are:
 

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.14-slim AS build
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS build
 ARG dev
 ARG buildver="dev-unknown"
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev git
 
-COPY --from=ghcr.io/astral-sh/uv:0.8.8 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.8.8@sha256:67b2bcccdc103d608727d1b577e58008ef810f751ed324715eb60b3f0c040d30 /uv /uvx /bin/
 
 COPY neodb /neodb
 COPY takahe /takahe
@@ -29,7 +29,7 @@ RUN find /misc/wheels-cache -type f | xargs -n 1 uv pip install --python /neodb-
 RUN --mount=type=cache,sharing=locked,target=/root/.cache uv sync --active --no-install-project $(if [ -z "$dev" ]; then echo "--no-dev"; fi)
 
 # runtime stage
-FROM python:3.14-slim AS runtime
+FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

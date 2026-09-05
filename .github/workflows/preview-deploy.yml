@@ -21,14 +21,14 @@ jobs:
     environment: ${{ vars.DEPLOY_ENV }}
     steps:
     - name: Send start notification
-      uses: appleboy/discord-action@master
+      uses: appleboy/discord-action@63ca534eba7886aa80b4cdcf59539841e8d27ef5
       with:
         webhook_id: ${{ secrets.DISCORD_WEBHOOK_ID }}
         webhook_token: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}
         color: "#6848a9"
         message: Deployment ${{ github.ref_name }} started
     - name: ssh
-      uses: appleboy/ssh-action@master
+      uses: appleboy/ssh-action@c4f70287fc37c43b14b30b407224bbbc8e8c6327
       with:
         host: ${{ secrets.SSH_HOST }}
         port: ${{ secrets.SSH_PORT }}
@@ -36,7 +36,7 @@ jobs:
         key: ${{ secrets.SSH_KEY }}
         script: ${{ vars.DEPLOY_SCRIPT }}
     - name: Send complete notification
-      uses: appleboy/discord-action@master
+      uses: appleboy/discord-action@63ca534eba7886aa80b4cdcf59539841e8d27ef5
       with:
         webhook_id: ${{ secrets.DISCORD_WEBHOOK_ID }}
         webhook_token: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}

@@ -21,30 +21,50 @@ jobs:
     runs-on: ubuntu-latest
     services:
       redis:
-        image: redis
+        image: redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 6379:6379
       db:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: test_neodb
+        options: >-
+          --health-cmd "pg_isready -U testuser -d test_neodb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 5432:5432
       db2:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: test_neodb_takahe
+        options: >-
+          --health-cmd "pg_isready -U testuser -d test_neodb_takahe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 15432:5432
       typesense:
-        image: typesense/typesense:30.1
+        image: typesense/typesense:30.1@sha256:91604dc128e2023e7cba34ae8bd36f68351bcb74ea33a84960bfdc5649cf43b3
         env:
           TYPESENSE_API_KEY: testpass
           TYPESENSE_DATA_DIR: /data
+        options: >-
+          --health-cmd "curl -fsS http://localhost:8108/health"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 8108:8108
         volumes:
@@ -94,15 +114,25 @@ jobs:
     runs-on: ubuntu-latest
     services:
       redis:
-        image: redis
+        image: redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 6379:6379
       takahe-db:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: takahe
           POSTGRES_PASSWORD: takahe
           POSTGRES_DB: takahe
+        options: >-
+          --health-cmd "pg_isready -U takahe -d takahe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 5432:5432
     strategy:
