@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$ComposeProject = "neodb-owner-tests-local"
+    [string]$ComposeProject = "neodb-owner-tests-local",
+    [switch]$Configure
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +23,72 @@ $keyPointer = [IntPtr]::Zero
 $plainKey = $null
 $endpoint = $null
 $searchUrl = $null
+
+if ($Configure) {
+    $configurationKey = $null
+    $endpointInput = $null
+    $protectedConfigurationValue = $null
+    $createdConfigurationFiles = @()
+    $createdConfigurationDirectories = @()
+    try {
+        foreach ($path in @($protectedKeyFile, $endpointFile)) {
+            if (Test-Path -LiteralPath $path) {
+                throw "Existing Typesense configuration detected; refusing overwrite"
+            }
+        }
+
+        $configurationParents = @(
+            (Split-Path -Path $protectedKeyFile -Parent),
+            (Split-Path -Path $endpointFile -Parent)
+        ) | Where-Object { $_ } | Sort-Object -Unique
+        foreach ($parent in $configurationParents) {
+            if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+                $createdConfigurationDirectories += $parent
+            }
+        }
+
+        $endpointInput = (Read-Host "Remote Typesense endpoint").Trim()
+        if ([string]::IsNullOrWhiteSpace($endpointInput)) {
+            throw "Typesense endpoint must not be empty"
+        }
+        $configurationKey = Read-Host "Remote Typesense API key" -AsSecureString
+        if ($null -eq $configurationKey -or $configurationKey.Length -eq 0) {
+            throw "Typesense API key must not be empty"
+        }
+
+        $protectedConfigurationValue = ConvertFrom-SecureString -SecureString $configurationKey
+        $utf8NoBom = [Text.UTF8Encoding]::new($false)
+        [IO.File]::WriteAllText($protectedKeyFile, $protectedConfigurationValue, $utf8NoBom)
+        $createdConfigurationFiles += $protectedKeyFile
+        [IO.File]::WriteAllText($endpointFile, $endpointInput, $utf8NoBom)
+        $createdConfigurationFiles += $endpointFile
+
+        "CONFIGURATION_RESULT = PASS"
+        "KEY_FILE_CREATED = YES"
+        "ENDPOINT_FILE_CREATED = YES"
+    } catch {
+        foreach ($path in $createdConfigurationFiles) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                Remove-Item -LiteralPath $path -Force
+            }
+        }
+        foreach ($parent in ($createdConfigurationDirectories | Sort-Object Length -Descending)) {
+            $parentHasEntries = @(Get-ChildItem -LiteralPath $parent -Force).Count -gt 0
+            if ((Test-Path -LiteralPath $parent -PathType Container) -and -not $parentHasEntries) {
+                Remove-Item -LiteralPath $parent -Force
+            }
+        }
+        throw "Typesense configuration failed; existing entries were not overwritten"
+    } finally {
+        if ($configurationKey) {
+            $configurationKey.Dispose()
+        }
+        $endpointInput = $null
+        $protectedConfigurationValue = $null
+    }
+    return
+}
 
 try {
     if (-not (Test-Path -LiteralPath $endpointFile -PathType Leaf)) {

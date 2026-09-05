@@ -8,7 +8,7 @@ description: Admit the exact NeoDB runner, source, dependencies, and required se
 Use this Skill whenever a command would make a NeoDB `OWNER TESTS` or
 `OWNER RUNTIME` claim, or would exercise the application, its test
 runner, its database/cache/search dependencies, or an owner runtime. Dispatch
-this Skill after task-preflight and before the first such command. T0 static
+this Skill after task-preflight and before the first such command. STATIC CHECKS
 inspection and repository text checks may run without runtime admission.
 
 This is a hard admission gate. An owner-test or owner-runtime claim is legitimate only when the
@@ -92,21 +92,42 @@ mechanism and a separate scoped owner-test key. Do not use the bootstrap/admin k
 routine test credential. Never print the plaintext key or full
 `NEODB_SEARCH_URL`.
 
-## Windows secure-store retrieval HOW
+## Windows secure-store workflows
 
 The repository-owned host orchestration entrypoint is
 `misc/bin/neodb-t1.ps1`. It uses the established Windows machine-local secure
-store contract:
+store contract. These are the two supported workflows.
 
-From the repository root, invoke it with:
+### First-time workstation setup
+
+From the repository root, invoke:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1 -Configure
+```
+
+The setup mode resolves the same default paths and environment-variable
+overrides as normal mode, securely prompts for the remote Typesense 30.1
+endpoint and API key, stores only the DPAPI-protected key outside Git, and
+writes only the endpoint configuration outside the checkout. It creates the
+containing machine-local directory when needed, refuses to overwrite either
+existing entry, reports safe creation facts only, and stops after setup. This
+must be repeated on each new Windows workstation. Do not copy the DPAPI file
+between Windows users or machines as a restoration strategy.
+
+### Normal OWNER TESTS
+
+From the repository root, invoke:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1
 ```
 
-The optional first argument is the disposable Compose project name. The
-entrypoint is the only supported host-side orchestration path for the local
-NeoDB OWNER TESTS environment.
+Normal mode retrieves the configured DPAPI entry, validates remote Typesense
+30.1, starts the Docker dependencies, executes Linux Docker OWNER TESTS, and
+cleans task state. The optional first argument remains the disposable Compose
+project name. The entrypoint is the only supported host-side orchestration path
+for the local NeoDB OWNER TESTS environment.
 
 ```text
 provider/mechanism = Windows DPAPI-protected SecureString for the key,
