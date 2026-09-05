@@ -20,7 +20,13 @@ from common.models import SiteConfig
 PERMITTED_WRITE_METHODS = ["PUT", "POST", "DELETE", "PATCH"]
 PERMITTED_READ_METHODS = ["GET", "HEAD", "OPTIONS"]
 
-_csrf_middleware = CsrfViewMiddleware(lambda request: None)
+
+
+def _csrf_get_response(request: HttpRequest) -> HttpResponse:
+    return HttpResponse()
+
+
+_csrf_middleware = CsrfViewMiddleware(_csrf_get_response)
 
 
 class OAuthAccessTokenAuth(HttpBearer):
@@ -38,7 +44,7 @@ class OAuthAccessTokenAuth(HttpBearer):
         identity = getattr(user, "identity", None)
         if not identity or identity.deleted:
             return False
-        request.identity_id = identity.pk  # type: ignore[attr-defined]
+        request.__dict__["identity_id"] = identity.pk
         self._check_session_csrf(request)
         return True
 
