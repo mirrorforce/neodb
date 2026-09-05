@@ -21,27 +21,42 @@ jobs:
     runs-on: ubuntu-latest
     services:
       redis:
-        image: redis
+        image: redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 6379:6379
       db:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: test_neodb
+        options: >-
+          --health-cmd "pg_isready -U testuser -d test_neodb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 5432:5432
       db2:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: test_neodb_takahe
+        options: >-
+          --health-cmd "pg_isready -U testuser -d test_neodb_takahe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 15432:5432
       typesense:
-        image: typesense/typesense:30.1
+        image: typesense/typesense:30.1@sha256:91604dc128e2023e7cba34ae8bd36f68351bcb74ea33a84960bfdc5649cf43b3
         env:
           TYPESENSE_API_KEY: testpass
           TYPESENSE_DATA_DIR: /data
@@ -59,30 +74,48 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-    - name: Install Dependencies
-      env:
-        UV_PYTHON: ${{ matrix.python-version }}
+    - name: Wait for Typesense
+      shell: bash
       run: |
-        uv sync -p ${{ matrix.python-version }}
-        sudo apt install -y gettext
-    - name: Run Tests
-      working-directory: neodb
-      env:
-        UV_PYTHON: ${{ matrix.python-version }}
-        NEODB_SECRET_KEY: test
-        NEODB_SITE_NAME: test
-        NEODB_SITE_DOMAIN: example.org
-        NEODB_DB_URL: postgres://testuser:testpass@127.0.0.1/test_neodb
-        TAKAHE_DB_URL: postgres://testuser:testpass@127.0.0.1/test_neodb_takahe
-        NEODB_REDIS_URL: redis://127.0.0.1:6379/0
-        NEODB_SEARCH_URL: typesense://testuser:testpass@127.0.0.1:8108/cat
+        for attempt in {1..30}; do
+          if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8108/health; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Typesense did not become ready after 30 attempts"
+        docker logs "${{ job.services.typesense.id }}" --tail 50 || true
+        exit 1
+    - name: Build NeoDB owner-test image
+      shell: bash
       run: |
-        uv run --project .. python manage.py compilemessages -l zh_Hans
-        uv run --project .. python -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml
+        source_sha="$(git rev-parse HEAD)"
+        source_tree="$(git rev-parse 'HEAD^{tree}')"
+        docker build \
+          --target owner-tests \
+          --build-arg dev=1 \
+          --build-arg buildver="${source_sha}" \
+          --build-arg sourcetree="${source_tree}" \
+          --tag "neodb-owner-tests:${source_sha}" .
+    - name: Run NeoDB owner tests
+      shell: bash
+      run: |
+        source_sha="$(git rev-parse HEAD)"
+        container_name="neodb-owner-tests-${GITHUB_RUN_ID}"
+        set +e
+        docker run --name "${container_name}" --network host \
+          --env NEODB_SECRET_KEY=test \
+          --env NEODB_SITE_NAME=test \
+          --env NEODB_SITE_DOMAIN=example.org \
+          --env NEODB_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb \
+          --env TAKAHE_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb_takahe \
+          --env NEODB_REDIS_URL=redis://127.0.0.1:6379/0 \
+          --env NEODB_SEARCH_URL=typesense://testuser:testpass@127.0.0.1:8108/cat \
+          "neodb-owner-tests:${source_sha}" /bin/sh /bin/neodb-t1
+        test_status=$?
+        docker cp "${container_name}:/neodb/coverage.xml" neodb/coverage.xml || true
+        docker rm "${container_name}" >/dev/null
+        exit "${test_status}"
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
@@ -94,15 +127,25 @@ jobs:
     runs-on: ubuntu-latest
     services:
       redis:
-        image: redis
+        image: redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 6379:6379
       takahe-db:
-        image: postgres
+        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
         env:
           POSTGRES_USER: takahe
           POSTGRES_PASSWORD: takahe
           POSTGRES_DB: takahe
+        options: >-
+          --health-cmd "pg_isready -U takahe -d takahe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
         ports:
           - 5432:5432
     strategy:

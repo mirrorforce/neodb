@@ -8,7 +8,7 @@ NeoDB is a Django project (code in the `neodb` folder of this repo), and it runs
 
 Prerequisite
 ------------
-- Python 3.13.x
+- Python 3.14.x
 - Docker Compose v2 or newer
 
 

@@ -35,7 +35,7 @@ jobs:
           echo "buildver=${{ github.ref_name }}-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
 
       - name: Send Discord notification
-        uses: appleboy/discord-action@master
+        uses: appleboy/discord-action@63ca534eba7886aa80b4cdcf59539841e8d27ef5
         with:
           webhook_id: ${{ secrets.DISCORD_WEBHOOK_ID }}
           webhook_token: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}
@@ -150,7 +150,7 @@ jobs:
 
       - name: Send Discord notification push complete
         if: github.repository_owner == 'neodb-social'
-        uses: appleboy/discord-action@master
+        uses: appleboy/discord-action@63ca534eba7886aa80b4cdcf59539841e8d27ef5
         with:
           webhook_id: ${{ secrets.DISCORD_WEBHOOK_ID }}
           webhook_token: ${{ secrets.DISCORD_WEBHOOK_TOKEN }}

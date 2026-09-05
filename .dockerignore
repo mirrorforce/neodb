@@ -1,6 +1,7 @@
 **.dockerignore
 **.DS_Store
 **.env
+**.coverage
 **.git
 **.github
 **.gitignore
@@ -11,6 +12,7 @@
 **.venv
 **.vscode
 **__pycache__
+**coverage.xml
 **pytest.ini
 .data
 codecov.yml
@@ -31,3 +33,11 @@ takahe/docs
 takahe/static-collected
 takahe/takahe/local_settings.py
 takahe/tests
+
+!neodb/pytest.ini
+!neodb/test_data
+!neodb/test_data/**
+!neodb/tests
+!neodb/tests/**
+!docs/lexicons
+!docs/lexicons/**

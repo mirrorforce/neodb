@@ -57,20 +57,22 @@ tasks, closed Issues, historical branches, or source archaeology.
 
 ## Evidence and delivery
 
-- T0 is static evidence: inspection, formatting, lint, type, compile, structural,
-  documentation, and changed-path checks. It does not establish runtime behavior.
-- T1/T2 claims require the current `test-environment` admission before the first
-  runtime-dependent command. A blocked admission is recorded as
-  `BLOCKED`/`NOT_RUN`; required services are not silently substituted.
-- NeoDB's current VinylHub machine-local canonical T1 profile is defined inside
-  `.agents/skills/test-environment/SKILL.md`. It is an explicit proven profile,
-  not something to reconstruct from `compose.yml`, old M0 notes, or previous
-  failure reports. In particular, native Compose search defaults are not
-  automatically the VinylHub owner-T1 search authority.
-- T3 app-composed development is owned and admitted by
-  `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
-  requirements but does not admit T3. A different App T3 service topology must
-  not silently overwrite the NeoDB T1 profile.
+- STATIC CHECKS cover inspection, formatting, lint, type, compile, structural,
+  documentation, and changed-path checks. They do not establish runtime behavior.
+- OWNER TESTS and OWNER RUNTIME claims require the current `test-environment`
+  admission before the first runtime-dependent command. A blocked admission is
+  recorded as `BLOCKED`/`NOT_RUN`; required services are not silently substituted.
+- NeoDB's current VinylHub machine-local canonical OWNER TESTS profile is defined
+  inside `.agents/skills/test-environment/SKILL.md`. It is an explicit proven
+  profile, not something to reconstruct from `compose.yml`, old M0 notes, or
+  previous failure reports. In particular, native Compose search defaults are
+  not automatically the VinylHub OWNER TESTS search authority.
+- LOCAL INTEGRATION is owned and admitted by `mirrorforce/vinyl-catalog-app`;
+  NeoDB supplies exact owner identities and requirements but does not admit that
+  cross-repository composition. An app-owned LOCAL INTEGRATION topology must not
+  silently overwrite the NeoDB OWNER TESTS profile.
+- OWNER TESTS evidence does not prove OWNER RUNTIME behavior, and OWNER RUNTIME
+  evidence does not prove LOCAL INTEGRATION behavior.
 - Preserve exact commands, outcomes, changed paths, non-scope, and bounded unknowns
   in acceptance evidence. Keep Skills, operations, and implemented behavior in
   their respective owners.
