@@ -98,6 +98,16 @@ The repository-owned host orchestration entrypoint is
 `misc/bin/neodb-t1.ps1`. It uses the established Windows machine-local secure
 store contract:
 
+From the repository root, invoke it with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1
+```
+
+The optional first argument is the disposable Compose project name. The
+entrypoint is the only supported host-side orchestration path for the local
+NeoDB OWNER TESTS environment.
+
 ```text
 provider/mechanism = Windows DPAPI-protected SecureString for the key,
                      plus a private endpoint value stored outside the checkout
