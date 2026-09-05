@@ -38,7 +38,7 @@ class OAuthAccessTokenAuth(HttpBearer):
         identity = getattr(user, "identity", None)
         if not identity or identity.deleted:
             return False
-        request.identity_id = identity.pk
+        request.identity_id = identity.pk  # type: ignore[attr-defined]
         self._check_session_csrf(request)
         return True
 
@@ -50,8 +50,8 @@ class OAuthAccessTokenAuth(HttpBearer):
         # Django Ninja deliberately marks API views csrf_exempt so bearer
         # clients do not need a browser cookie. Re-run Django's normal check
         # only for the session-authenticated branch.
-        def callback(*args, **kwargs):
-            pass
+        def callback(*args: Any, **kwargs: Any) -> HttpResponse:
+            return HttpResponse()
 
         if _csrf_middleware.process_view(request, callback, (), {}) is not None:
             raise HttpError(403, "CSRF check failed")
