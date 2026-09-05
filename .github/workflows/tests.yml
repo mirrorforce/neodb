@@ -86,30 +86,35 @@ jobs:
         echo "Typesense did not become ready after 30 attempts"
         docker logs "${{ job.services.typesense.id }}" --tail 50 || true
         exit 1
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-    - name: Install Dependencies
-      env:
-        UV_PYTHON: ${{ matrix.python-version }}
+    - name: Build NeoDB T1 image
+      shell: bash
       run: |
-        uv sync -p ${{ matrix.python-version }}
-        sudo apt install -y gettext
-    - name: Run Tests
-      working-directory: neodb
-      env:
-        UV_PYTHON: ${{ matrix.python-version }}
-        NEODB_SECRET_KEY: test
-        NEODB_SITE_NAME: test
-        NEODB_SITE_DOMAIN: example.org
-        NEODB_DB_URL: postgres://testuser:testpass@127.0.0.1/test_neodb
-        TAKAHE_DB_URL: postgres://testuser:testpass@127.0.0.1/test_neodb_takahe
-        NEODB_REDIS_URL: redis://127.0.0.1:6379/0
-        NEODB_SEARCH_URL: typesense://testuser:testpass@127.0.0.1:8108/cat
+        source_sha="$(git rev-parse HEAD)"
+        source_tree="$(git rev-parse 'HEAD^{tree}')"
+        docker build \
+          --build-arg dev=1 \
+          --build-arg buildver="${source_sha}" \
+          --build-arg sourcetree="${source_tree}" \
+          --tag "neodb-t1:${source_sha}" .
+    - name: Run NeoDB T1
+      shell: bash
       run: |
-        uv run --project .. python manage.py compilemessages -l zh_Hans
-        uv run --project .. python -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml
+        source_sha="$(git rev-parse HEAD)"
+        container_name="neodb-t1-${GITHUB_RUN_ID}"
+        set +e
+        docker run --name "${container_name}" --network host \
+          --env NEODB_SECRET_KEY=test \
+          --env NEODB_SITE_NAME=test \
+          --env NEODB_SITE_DOMAIN=example.org \
+          --env NEODB_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb \
+          --env TAKAHE_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb_takahe \
+          --env NEODB_REDIS_URL=redis://127.0.0.1:6379/0 \
+          --env NEODB_SEARCH_URL=typesense://testuser:testpass@127.0.0.1:8108/cat \
+          "neodb-t1:${source_sha}" /bin/sh /bin/neodb-t1
+        test_status=$?
+        docker cp "${container_name}:/neodb/coverage.xml" neodb/coverage.xml || true
+        docker rm "${container_name}" >/dev/null
+        exit "${test_status}"
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:

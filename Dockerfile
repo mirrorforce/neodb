@@ -2,6 +2,7 @@
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS build
 ARG dev
 ARG buildver="dev-unknown"
+ARG sourcetree="dev-unknown"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV UV_COMPILE_BYTECODE=0
 ENV PYTHONUNBUFFERED=1
@@ -17,6 +18,7 @@ COPY misc /misc
 COPY pyproject.toml uv.lock /neodb/
 
 RUN echo "${buildver}" > /etc/neodb_version \
+ && echo "${sourcetree}" > /etc/neodb_tree \
  && echo "__version__ = \"${buildver}\"" > /neodb/boofilsic/__init__.py \
  && echo "__version__ = \"${buildver}\"" > /takahe/takahe/neodb.py
 
@@ -45,6 +47,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt-run apt-get update \
 # postgresql and redis cli are not required, but install for development convenience
 
 COPY --from=build /etc/neodb_version /etc/neodb_version
+COPY --from=build /etc/neodb_tree /etc/neodb_tree
 COPY --from=build /neodb /neodb
 COPY --from=build /takahe /takahe
 COPY --from=build /neodb-venv /neodb-venv
@@ -64,6 +67,7 @@ COPY misc/bin/* /bin/
 COPY misc/bin/nginx-start /neodb/misc/bin/
 COPY misc/nginx.conf.d/* /neodb/misc/nginx.conf.d/
 
+RUN chown -R app:app /neodb /takahe
 USER app:app
 
 CMD [ "neodb-hello"]

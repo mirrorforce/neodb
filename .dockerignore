@@ -31,3 +31,9 @@ takahe/docs
 takahe/static-collected
 takahe/takahe/local_settings.py
 takahe/tests
+
+!neodb/pytest.ini
+!neodb/test_data
+!neodb/test_data/**
+!neodb/tests
+!neodb/tests/**

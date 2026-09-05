@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+cd /neodb
+PYTHON=/neodb-venv/bin/python
+
+"$PYTHON" manage.py compilemessages -l zh_Hans
+exec "$PYTHON" -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml

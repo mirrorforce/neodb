@@ -28,10 +28,17 @@ SOURCE
   exact current NeoDB task SHA/tree
   exact current uv dependency lock
 
+HOST
+  Windows orchestration only: editor, Git, secure-store retrieval, Docker, evidence
+  NeoDB tests do not run against a Windows source checkout
+
 TEST RUNNER
-  Python 3.14
-  repository test source + dev/test dependencies present
-  cwd = neodb
+  Linux Docker container built from the repository Dockerfile
+  exact current source baked into the image; no source bind mount
+  Python 3.14.x in the image
+  exact uv.lock and locked dev/test dependencies
+  cwd = /neodb
+  entrypoint = /bin/neodb-t1
 
 LOCAL DOCKER SERVICES
   Product PostgreSQL
@@ -59,20 +66,24 @@ SEARCH
 ## Host runtime precision
 
 Project Python compatibility is `pyproject.toml requires-python = >=3.14,<3.15`.
-`.python-version = 3.14` is a minor-line selector, not an exact patch pin.
-For machine-local Windows, macOS, or Linux host T1, any compatible CPython
-3.14.x is admissible. Record the actual host Python patch and build in
-`RUNNER_IDENTITY` evidence; it is not a hard requirement by default.
+`.python-version = 3.14` means a minor-line selector, not an exact patch pin.
+For a Windows, macOS, or Linux host used for repository tooling, compatible
+CPython 3.14.x is admissible. Record the actual host Python patch and build as
+`RUNNER_IDENTITY` evidence; it is not a hard requirement by default. The
+canonical machine-local NeoDB T1 runner is the Linux Docker container above,
+so a Windows host Python import failure is a platform mismatch, not a reason to
+change NeoDB source for Windows compatibility.
 
-The Docker Python patch and the Python patch resolved by GitHub CI do not govern
-the host Python patch. An exact host Python patch pin is allowed only when
-current owner authority proves a patch-specific compatibility, security, or
-toolchain need.
+The Docker Python patch does not govern the host Python patch. The Python patch
+resolved by GitHub CI does not govern the host Python patch. An exact host
+Python patch pin is allowed only when current owner authority proves a
+patch-specific compatibility, security, or toolchain need.
 
-Docker uv 0.8.8 belongs to the Docker build identity. Host T1 requires the exact
-task source, exact `uv.lock`, a successful locked sync, and the actual host uv
-version recorded in evidence. Host uv does not need to equal Docker uv 0.8.8
-unless current claim-specific evidence requires it.
+Docker uv 0.8.8 belongs to the Docker build identity. The Docker T1 runner
+requires the exact task source, exact `uv.lock`, a successful locked sync, and
+the actual image uv version recorded in evidence. A host uv version may be
+recorded as orchestration evidence, but it does not need to equal Docker uv
+0.8.8 unless current claim-specific evidence requires it.
 
 The remote Typesense endpoint and credential are machine-local/private runtime
 inputs. They must not be committed, printed, copied into Issue/PR evidence, or
@@ -83,9 +94,11 @@ routine test credential. Never print the plaintext key or full
 
 The absence of a local Typesense container is **not** a T1 blocker for this
 profile. Native `compose.yml` has its own pinned local Typesense 30.1 runtime
-service; that service is not the machine-local VinylHub T1 authority.
+service, but the `t1` service depends only on Product PostgreSQL, Takahē
+PostgreSQL, and Redis. The machine-local T1 search service is remote Typesense
+30.1, injected into the test-container process through the secure-store path.
 
-The canonical commands, from `neodb`, are:
+The canonical commands, from `/neodb` inside the Linux test container, are:
 
 ```text
 uv run --project .. python manage.py compilemessages -l zh_Hans
@@ -93,8 +106,9 @@ uv run --project .. python -m pytest -n auto --cov=. --cov-report=term-missing -
 ```
 
 Do not skip search tests, substitute another Typesense version, lower coverage,
-change the canonical command, or create a local Typesense workaround to
-manufacture PASS.
+change the canonical command, use a Windows source bind mount, or create a
+local Typesense workaround to manufacture PASS. `/bin/neodb-t1` runs the two
+commands above in order with `/neodb-venv/bin/python`.
 
 This profile is owner T1. App-owned T3 composition is a separate evidence tier
 and may use a different exact service topology; T3 evidence must not silently
@@ -151,7 +165,9 @@ the exact owner runtime/provider identities required by the current owner Issue;
 3. Prove the exact task source SHA/tree and exact lock are the source/dependencies
    used by the runner. A stale image, moving tag, old branch, or prior-lane
    checkout is not current evidence.
-4. For machine-local T1, prove Python 3.14, test source and dev/test dependencies
+4. For machine-local T1, build the Linux test image from the exact source with
+   the exact lock and dev/test dependencies. Prove the image ID, Python/uv
+   identity, `/etc/neodb_version` source SHA, and `/etc/neodb_tree` source tree
    before running the canonical commands.
 5. Start/admit only the required local Docker PostgreSQL and Redis services using
    the accepted identities above. Prove database/cache reachability and readiness;
