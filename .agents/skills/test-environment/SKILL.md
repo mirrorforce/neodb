@@ -107,12 +107,15 @@ optional path overrides = NEODB_TYPESENSE_KEY_FILE,
                            NEODB_TYPESENSE_ENDPOINT_FILE
 ```
 
-The helper reads those entries, constructs `NEODB_SEARCH_URL` only in its
-process memory, and passes it through the process environment to the explicit
-Compose `owner-tests` service. It never writes the URL/key to a file, Compose YAML, the
-image, Git, or evidence. It records no plaintext value. The helper invokes only
-the `neodb-owner-tests`, `neodb-db`, `takahe-db`, and `redis` services, then runs Compose
-cleanup with disposable volumes and removes its task-owned temporary data path.
+The helper reads those entries, checks remote Typesense health/version and
+authenticated collection-endpoint reachability without retaining response
+content, constructs `NEODB_SEARCH_URL` only in its process memory, and passes it
+through the process environment to the explicit Compose `owner-tests` service.
+It never writes the URL/key to a file, Compose YAML, the image, Git, or
+evidence. It records no plaintext value. The helper invokes only the
+`neodb-owner-tests`, `neodb-db`, `takahe-db`, and `redis` services, then runs
+Compose cleanup with disposable volumes and removes its task-owned temporary
+data path.
 It clears the process environment and zeroes the DPAPI plaintext buffer in a
 `finally` block. A missing/inaccessible entry may be reported as
 `CREDENTIAL_PRECONDITION_MISSING` only after this entrypoint has been invoked.

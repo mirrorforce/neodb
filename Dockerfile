@@ -34,7 +34,7 @@ RUN --mount=type=cache,sharing=locked,target=/root/.cache uv sync --active --no-
 # Keep the ordinary runtime payload separate from owner-test-only inputs.  The
 # full source remains available to the explicit `owner-tests` target below.
 RUN mkdir -p /runtime-bin \
- && find /misc/bin -maxdepth 1 -type f ! -name neodb-t1 -exec cp {} /runtime-bin/ \; \
+ && find /misc/bin -maxdepth 1 -type f ! -name neodb-t1 ! -name neodb-t1.ps1 -exec cp {} /runtime-bin/ \; \
  && cp -a /neodb /runtime-neodb \
  && rm -rf /runtime-neodb/pytest.ini /runtime-neodb/tests /runtime-neodb/test_data \
  && cp -a /takahe /runtime-takahe \

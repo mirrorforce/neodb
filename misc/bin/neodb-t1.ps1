@@ -44,6 +44,23 @@ try {
         throw "Typesense DPAPI secure-store entry is unusable"
     }
 
+    $baseUri = if ($endpoint -match "^https?://") {
+        $endpoint.TrimEnd('/')
+    } else {
+        "http://$endpoint"
+    }
+    $typesenseHeaders = @{ "X-TYPESENSE-API-KEY" = $plainKey }
+    try {
+        $health = Invoke-RestMethod -Uri "$baseUri/health" -Headers $typesenseHeaders -TimeoutSec 10
+        $debug = Invoke-RestMethod -Uri "$baseUri/debug" -Headers $typesenseHeaders -TimeoutSec 10
+        $null = Invoke-RestMethod -Uri "$baseUri/collections" -Headers $typesenseHeaders -TimeoutSec 10
+        if ($health.ok -ne $true -or [string]$debug.version -ne "30.1") {
+            throw "unexpected remote Typesense response"
+        }
+    } catch {
+        throw "Remote Typesense health/authentication check failed"
+    }
+
     # The URL is process-scoped and is never written to a file or emitted.
     $searchUrl = "typesense://user:$plainKey@$endpoint/catalog"
     $env:NEODB_SEARCH_URL = $searchUrl
