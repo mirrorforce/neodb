@@ -3,6 +3,7 @@ import json
 import pytest
 from django.contrib.sessions.backends.db import SessionStore
 from django.test import Client
+
 from journal.models import Tag
 from takahe.utils import Takahe
 from users.models import ManagedCommunityAccount, ManagedIdentityBinding, User
