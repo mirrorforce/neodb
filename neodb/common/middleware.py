@@ -8,39 +8,21 @@ from pytz.tzinfo import BaseTzInfo
 from tz_detect.utils import offset_to_timezone
 
 
-class DummySession(dict):
-    """A session-like object that never persists, used for API requests."""
-
-    modified = False
-    accessed = False
-
-    def flush(self):
-        self.clear()
-
-    def cycle_key(self):
-        pass
-
-    def set_expiry(self, _value):
-        pass
-
-    def is_empty(self):
-        return True
-
-
 class APIAwareSessionMiddleware(SessionMiddleware):
     """
-    SessionMiddleware that skips session persistence for API requests.
-    API requests get a DummySession that behaves like an empty dict but never saves.
+    SessionMiddleware that reads, but never persists, API request sessions.
+
+    Native Product APIs can use the existing first-party Django session for
+    authentication. API requests remain read-only with respect to the session
+    store, so an API response cannot unexpectedly create or mutate a browser
+    session.
     """
 
     def process_request(self, request):
-        if request.path.startswith("/api/"):
-            request.session = DummySession()
-            return
         super().process_request(request)
 
     def process_response(self, request, response):
-        if isinstance(request.session, DummySession):
+        if request.path.startswith("/api/"):
             return response
         return super().process_response(request, response)
 
