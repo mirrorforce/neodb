@@ -44,11 +44,17 @@ try {
         throw "Typesense DPAPI secure-store entry is unusable"
     }
 
-    $baseUri = if ($endpoint -match "^https?://") {
-        $endpoint.TrimEnd('/')
+    $endpointUri = if ($endpoint -match "^https?://") {
+        [Uri]$endpoint
     } else {
-        "http://$endpoint"
+        [Uri]("http://$endpoint")
     }
+    if ($endpoint -notmatch "^(?:https?://)?(?:\[[^\]]+\]|[^/:]+):\d+(?:/|$)") {
+        $endpointBuilder = [UriBuilder]$endpointUri
+        $endpointBuilder.Port = 8108
+        $endpointUri = $endpointBuilder.Uri
+    }
+    $baseUri = $endpointUri.AbsoluteUri.TrimEnd('/')
     $typesenseHeaders = @{ "X-TYPESENSE-API-KEY" = $plainKey }
     try {
         $health = Invoke-RestMethod -Uri "$baseUri/health" -Headers $typesenseHeaders -TimeoutSec 10
@@ -62,7 +68,7 @@ try {
     }
 
     # The URL is process-scoped and is never written to a file or emitted.
-    $searchUrl = "typesense://user:$plainKey@$endpoint/catalog"
+    $searchUrl = "typesense://user:$plainKey@$($endpointUri.Authority)/catalog"
     $env:NEODB_SEARCH_URL = $searchUrl
     $env:NEODB_DATA = $dataRoot
     $env:NEODB_OWNER_TEST_SOURCE_SHA = (& git -C $repoRoot rev-parse HEAD).Trim()

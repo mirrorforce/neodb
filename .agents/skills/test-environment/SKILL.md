@@ -114,7 +114,9 @@ provider/mechanism = Windows DPAPI-protected SecureString for the key,
 safe entry identifiers = %USERPROFILE%\.vinylhub-secrets\typesense-t1.dpapi
                          %USERPROFILE%\.vinylhub-secrets\typesense-t1.endpoint
 optional path overrides = NEODB_TYPESENSE_KEY_FILE,
-                           NEODB_TYPESENSE_ENDPOINT_FILE
+                            NEODB_TYPESENSE_ENDPOINT_FILE
+endpoint format = host, host:port, or URL; a host/URL without an explicit
+                  port uses Typesense's 8108 port
 ```
 
 The helper reads those entries, checks remote Typesense health/version and
