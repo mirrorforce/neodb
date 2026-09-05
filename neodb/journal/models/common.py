@@ -29,6 +29,7 @@ from catalog.models import (
     item_content_types,
 )
 from common.sentry import count as sentry_count
+from mastodon.models.bluesky_oauth import OAuthError, OAuthRejectedError
 from takahe.utils import Takahe
 from users.middlewares import activate_language_for_user
 from users.models import APIdentity, User
@@ -227,7 +228,9 @@ class Piece(PolymorphicModel, UserOwnedObjectMixin):
 
     @property
     def api_url(self):
-        return f"/api/{self.url}" if self.url_path else None
+        # url is already rooted, so no separator here (it used to emit
+        # "/api//review/x"); same form as Item.api_url
+        return f"/api{self.url}" if self.url_path else None
 
     @property
     def like_count(self):
@@ -779,9 +782,20 @@ class Piece(PolymorphicModel, UserOwnedObjectMixin):
             params["associated_refs"] = refs
         try:
             r = bluesky.post(**params)
-        except (exceptions.UnauthorizedError, exceptions.BadRequestError) as e:
+        except (
+            exceptions.UnauthorizedError,
+            exceptions.BadRequestError,
+            OAuthError,
+        ) as e:
             error_message = str(e)
-            if isinstance(e, exceptions.UnauthorizedError) or "ExpiredToken" in str(e):
+            # an OAuthRejectedError means the stored session could not be
+            # refreshed (rotated away, revoked or expired refresh token), so
+            # only a new authorization can restore crossposting; a plain
+            # OAuthError is a transport failure that a retry may fix
+            if (
+                isinstance(e, (exceptions.UnauthorizedError, OAuthRejectedError))
+                or "ExpiredToken" in error_message
+            ):
                 # re-authorize if ATProto token is expired
                 error_type = CrosspostRetry.ErrorType.auth
                 messages.error(

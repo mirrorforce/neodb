@@ -1,6 +1,6 @@
 import io
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from blurhash_rs import blurhash_encode
 from django.conf import settings
@@ -12,6 +12,8 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from loguru import logger
 from PIL import Image
+
+from common.models import SiteConfig
 
 from .models import *
 
@@ -178,12 +180,15 @@ class Takahe:
         display_name, avatar, restricted, etc.) fires a single-row lookup on
         users_identity — one per unique APIdentity in the list.
         """
-        seen: dict[int, object] = {}
+        # keyed by pk, but every instance is kept: select_related("owner")
+        # hands each row its own APIdentity, and priming only the first one
+        # leaves the rest of a single-owner page firing a lookup each
+        seen: dict[int, list[Any]] = {}
         to_load: set[int] = set()
         for owner in owners:
-            if owner is None or owner.pk in seen:
+            if owner is None:
                 continue
-            seen[owner.pk] = owner
+            seen.setdefault(owner.pk, []).append(owner)
             if "takahe_identity" not in owner.__dict__:
                 to_load.add(owner.pk)
         if not to_load:
@@ -192,10 +197,11 @@ class Takahe:
             i.pk: i
             for i in Identity.objects.filter(pk__in=to_load).select_related("domain")
         }
-        for pk, owner in seen.items():
+        for pk, instances in seen.items():
             identity = identities.get(pk)
             if identity is not None:
-                owner.__dict__["takahe_identity"] = identity
+                for owner in instances:
+                    owner.__dict__["takahe_identity"] = identity
 
     @staticmethod
     def get_identity_by_local_user(u: "NeoUser"):
@@ -586,7 +592,7 @@ class Takahe:
                     "Accept": "application/activity+json",
                     "User-Agent": settings.TAKAHE_USER_AGENT,
                 },
-                timeout=settings.TAKAHE_REMOTE_TIMEOUT,
+                timeout=SiteConfig.system.mastodon_timeout,
                 follow_redirects=True,
             )
             if response.status_code == 200:

@@ -1,14 +1,17 @@
-from typing import Any, List
+from typing import Any
 
 from django.conf import settings
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
+from django.utils.functional import lazy
 from loguru import logger
-from ninja import NinjaAPI, Schema, Status
+from ninja import Field, NinjaAPI, Schema, Status
+from pydantic import AliasChoices
 from ninja.pagination import PageNumberPagination as NinjaPageNumberPagination
 from ninja.security import HttpBearer
 
 from catalog.models import Item
+from common.models import SiteConfig
 from takahe.utils import Takahe
 from users.models.apidentity import APIdentity
 
@@ -81,11 +84,35 @@ class RedirectedResult(Schema):
     url: str
 
 
+def renamed_field(new: str, old: str) -> Any:
+    """Field that accepts either name of a renamed input field.
+
+    For the in-schemas whose text field was renamed (`body` -> `content`,
+    `brief` -> `description`). `new` comes first, so it wins when a caller
+    sends both, and it is the name the OpenAPI request schema requires;
+    declare `old` alongside as `deprecated_field()` so it stays visible.
+
+    A model validator cannot do this: ninja's own root validator is
+    mode="wrap" and hands subclass validators a DjangoGetter, not the payload.
+    """
+    return Field(validation_alias=AliasChoices(new, old))
+
+
+def deprecated_field() -> Any:
+    """The old name of a `renamed_field`, kept only to document it.
+
+    Its value is read through the new field's alias, so views never read
+    this one; it exists so the Swagger page still lists the name older
+    clients send.
+    """
+    return Field(None, deprecated=True)
+
+
 class PageNumberPagination(NinjaPageNumberPagination):
     items_attribute = "data"
 
     class Output(Schema):
-        data: List[Any]
+        data: list[Any]
         pages: int
         count: int
 
@@ -109,11 +136,23 @@ class PageNumberPagination(NinjaPageNumberPagination):
         }
 
 
+def _site_name() -> str:
+    SiteConfig.ensure_loaded()
+    return SiteConfig.system.site_name
+
+
+def _api_description() -> str:
+    site_url = settings.SITE_INFO["site_url"]
+    return f"{_site_name()} API <hr/><a href='{site_url}'>Learn more</a>"
+
+
 api = NinjaAPI(
     auth=OAuthAccessTokenAuth(),
-    title=f"{settings.SITE_INFO['site_name']} API",
+    # lazy strings: the site name is a runtime SiteConfig value, and this module
+    # is imported before any request has loaded the config
+    title=lazy(lambda: f"{_site_name()} API", str)(),
     version="1.0.0",
-    description=f"{settings.SITE_INFO['site_name']} API <hr/><a href='{settings.SITE_INFO['site_url']}'>Learn more</a>",
+    description=lazy(_api_description, str)(),
 )
 
 NOT_FOUND = Status(404, {"message": "Not found"})

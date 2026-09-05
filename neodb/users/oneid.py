@@ -1,10 +1,6 @@
-"""Configuration-driven OIDC Authorization Code + PKCE verification for OneID.
+"""Small configuration-driven OIDC client for Managed Identity login."""
 
-The configured provider's discovery document supplies endpoint names and JWKS.
-No provider-specific Tencent endpoints or claims are embedded here.  This
-module verifies an ID token before any Product binding or session operation;
-it never persists exchanged OAuth credentials.
-"""
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -26,7 +22,7 @@ _SUPPORTED_ALGORITHMS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
 
 
 class OneIDError(Exception):
-    """Base class for expected OneID configuration/provider/validation errors."""
+    """Base class for expected OneID errors."""
 
 
 class OneIDConfigurationError(OneIDError):
@@ -43,7 +39,7 @@ class OneIDValidationError(OneIDError):
 
 @dataclass(frozen=True)
 class VerifiedManagedIdentity:
-    """The verified immutable OneID anchor plus non-authoritative attributes."""
+    """The verified immutable anchor plus non-authoritative attributes."""
 
     issuer: str
     subject: str
@@ -94,7 +90,7 @@ class OneIDConfig:
 
 
 class OneIDClient:
-    """Small OIDC client whose only Product result is a verified identity."""
+    """Return only a verified identity; never persist provider credentials."""
 
     def __init__(self, config: OneIDConfig | None = None):
         self.config = config or OneIDConfig.from_settings()
@@ -169,8 +165,10 @@ class OneIDClient:
             if request.GET.get("error"):
                 raise OneIDProviderError("OneID authorization was not completed")
             raise OneIDValidationError("OneID callback has no authorization code")
-        if pending.get("issuer") != self.config.issuer:
+        if pending["issuer"] != self.config.issuer:
             raise OneIDValidationError("OneID callback configuration changed")
+        if pending["redirect_uri"] != self.config.redirect_uri:
+            raise OneIDValidationError("OneID callback redirect changed")
 
         metadata = self._metadata()
         token_response = self._exchange_code(
@@ -189,15 +187,14 @@ class OneIDClient:
             raise OneIDValidationError("OneID token has no stable subject")
         if len(subject) > 255:
             raise OneIDValidationError("OneID subject is too long")
-        attrs = {
-            name: claims[name]
-            for name in self.config.accepted_source_attributes
-            if name in claims
-        }
         return VerifiedManagedIdentity(
             issuer=self.config.issuer,
             subject=subject,
-            accepted_source_attributes=attrs,
+            accepted_source_attributes={
+                name: claims[name]
+                for name in self.config.accepted_source_attributes
+                if name in claims
+            },
         )
 
     def _exchange_code(
@@ -298,7 +295,11 @@ class OneIDClient:
             raise OneIDValidationError("OneID token authorized party mismatch")
         now = time.time()
         exp = claims.get("exp")
-        if not _is_number(exp) or exp < now - self.config.clock_skew:
+        if (
+            isinstance(exp, bool)
+            or not isinstance(exp, (int, float))
+            or exp < now - self.config.clock_skew
+        ):
             raise OneIDValidationError("OneID token is expired")
         nbf = claims.get("nbf")
         if nbf is not None and (

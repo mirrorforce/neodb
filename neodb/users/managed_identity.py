@@ -1,3 +1,4 @@
+import secrets
 from dataclasses import dataclass
 
 from django.contrib import auth
@@ -9,11 +10,11 @@ from .oneid import VerifiedManagedIdentity
 
 
 class ManagedIdentityInvariantError(RuntimeError):
-    """Raised when persisted identity data cannot be resolved unambiguously."""
+    """Raised when persisted identity data cannot be resolved safely."""
 
 
 class ManagedIdentityConflictError(ManagedIdentityInvariantError):
-    """Raised when a verified identity is already owned by another user."""
+    """Raised when a verified identity is owned by another user."""
 
 
 @dataclass(frozen=True)
@@ -30,12 +31,7 @@ class ManagedIdentityResolution:
 def resolve_managed_identity(
     identity: VerifiedManagedIdentity,
 ) -> ManagedIdentityResolution:
-    """Resolve the immutable identity anchor or return bootstrap-required.
-
-    The database unique constraint is the authority for cardinality.  An
-    ambiguous or orphaned row is an invariant failure, never a new-account
-    signal.
-    """
+    """Resolve the immutable identity anchor without creating a user."""
 
     try:
         binding = ManagedIdentityBinding.objects.get(
@@ -61,12 +57,7 @@ def resolve_managed_identity(
 def bind_managed_identity(
     identity: VerifiedManagedIdentity, user: User
 ) -> ManagedIdentityBinding:
-    """Create or converge a binding using database uniqueness authority.
-
-    This primitive intentionally does not create users.  A caller such as #74
-    may invoke it inside its own Product account transaction after creating a
-    complete ``User``.
-    """
+    """Create or converge a binding without ever reassigning its owner."""
 
     try:
         with transaction.atomic():
@@ -76,9 +67,6 @@ def bind_managed_identity(
                 defaults={"user": user},
             )
     except IntegrityError:
-        # A concurrent creator may win the unique constraint between the
-        # lookup and insert.  Read the committed winner and apply the same
-        # ownership check below; never silently reassign it.
         try:
             binding = ManagedIdentityBinding.objects.get(
                 issuer=identity.issuer,
@@ -100,17 +88,58 @@ def bind_managed_identity(
     return binding
 
 
+def bootstrap_managed_identity(
+    identity: VerifiedManagedIdentity,
+) -> ManagedIdentityResolution:
+    """Create one native Product user and bind the verified identity.
+
+    The unique database constraint is the convergence authority for concurrent
+    first logins. This function has no Community/Core/provider side effects.
+    """
+
+    from .managed_community import ensure_managed_community_account
+
+    for _ in range(8):
+        try:
+            with transaction.atomic():
+                binding = (
+                    ManagedIdentityBinding.objects.select_for_update()
+                    .filter(issuer=identity.issuer, subject=identity.subject)
+                    .first()
+                )
+                if binding:
+                    user = binding.user
+                else:
+                    user = User.register(username=_new_username())
+                    binding = ManagedIdentityBinding.objects.create(
+                        issuer=identity.issuer,
+                        subject=identity.subject,
+                        user=user,
+                    )
+                ensure_managed_community_account(binding)
+            return ManagedIdentityResolution(identity, binding, user)
+        except IntegrityError:
+            resolved = resolve_managed_identity(identity)
+            if not resolved.bootstrap_required:
+                return resolved
+    raise ManagedIdentityInvariantError("managed identity bootstrap did not converge")
+
+
 def login_managed_identity(
     request: HttpRequest, identity: VerifiedManagedIdentity
 ) -> ManagedIdentityResolution:
-    """Authenticate an already-bound identity through Django's session auth."""
+    """Authenticate an already-bound identity through Django session auth."""
 
     resolution = resolve_managed_identity(identity)
     if resolution.bootstrap_required:
         return resolution
+    assert resolution.binding is not None
     assert resolution.user is not None
     if not resolution.user.is_active:
         raise ManagedIdentityInvariantError("managed identity user is inactive")
+    from .managed_community import ensure_managed_community_account
+
+    ensure_managed_community_account(resolution.binding)
     auth.login(request, resolution.user, backend="mastodon.auth.OAuth2Backend")
     return resolution
 
@@ -119,3 +148,7 @@ def logout_product_session(request: HttpRequest) -> None:
     """Invalidate the ordinary NeoDB/Django Product session."""
 
     auth.logout(request)
+
+
+def _new_username() -> str:
+    return "vh" + secrets.token_hex(13)

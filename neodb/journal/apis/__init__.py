@@ -1,10 +1,8 @@
 from .article import *  # noqa
 from .attachment import *  # noqa
-from .cabinet import *  # noqa
 from .collection import *  # noqa
 from .note import *  # noqa
 from .review import *  # noqa
 from .shelf import *  # noqa
 from .tag import *  # noqa
 from .post import *  # noqa
-from .community import *  # noqa

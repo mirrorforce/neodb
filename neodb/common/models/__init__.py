@@ -6,7 +6,6 @@ from .country import (
     normalize_country,
 )
 from .cron import BaseJob, JobManager
-from .durable_dispatch import DurableDispatch
 from .duration import (
     coerce_album_duration,
     coerce_video_duration,
@@ -58,13 +57,12 @@ from .partial_date import (
 from .price import normalize_price
 from .site_config import SiteConfig
 
-__all__ = [  # noqa: RUF022 - preserve the existing public export order
+__all__ = [
     "ALBUM_TYPE_CHOICES",
     "ALBUM_TYPE_CODES",
     "BaseJob",
     "COUNTRY_CHOICES",
     "COUNTRY_CODES",
-    "DurableDispatch",
     "GAME_PLATFORM_CHOICES",
     "GAME_PLATFORM_CODES",
     "GENRE_CHOICES",

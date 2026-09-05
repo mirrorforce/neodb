@@ -9,7 +9,7 @@ class UsersConfig(AppConfig):
 
         # register cron jobs
         from users.jobs import (  # noqa
-            ManagedCommunityReconciler,
+            ManagedPixelfedAccountReconciler,
             MastodonUserSync,
             RegistrationCaptchaPool,
         )

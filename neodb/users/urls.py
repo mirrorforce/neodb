@@ -6,8 +6,8 @@ app_name = "users"
 urlpatterns = [
     path("login", login, name="login"),
     path("login/proof", login_proof, name="login_proof"),
-    path("oneid/start", oneid_start, name="oneid_start"),
-    path("oneid/callback", oneid_callback, name="oneid_callback"),
+    path("oneid/start", oneid_start, name="oneid_start"),  # type: ignore
+    path("oneid/callback", oneid_callback, name="oneid_callback"),  # type: ignore
     path("register", register, name="register"),
     path("captcha", registration_captcha, name="captcha"),
     path(

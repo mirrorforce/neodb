@@ -1,65 +1,73 @@
-from django.conf import settings
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, ClassVar
+
 from django.db import models
 
+from common.models import jsondata
 
-class ManagedCommunityProjection(models.Model):
-    """Product-owned state for the one managed Community projection."""
+if TYPE_CHECKING:
+    from .managed_identity import ManagedIdentityBinding
+
+
+class ManagedCommunityAccount(models.Model):
+    """Product-owned responsibility for one managed Community account.
+
+    This is deliberately separate from mastodon.SocialAccount: the managed
+    role must not enter ordinary external-account sync, crosspost, or UI
+    discovery paths.
+    """
 
     class State(models.TextChoices):
         PENDING = "pending", "Pending"
-        PROVISIONED = "provisioned", "Provisioned"
-        REJECTED = "rejected", "Rejected"
+        ACTIVE = "active", "Active"
         UNKNOWN = "unknown", "Unknown"
-        SUSPENDED = "suspended", "Suspended"
-        SUSPEND_UNKNOWN = "suspend_unknown", "Suspend unknown"
-        DELETING = "deleting", "Deleting"
-        DELETE_UNKNOWN = "delete_unknown", "Delete unknown"
-        DELETED = "deleted", "Deleted"
+        REJECTED = "rejected", "Rejected"
 
-    class Operation(models.TextChoices):
-        PROVISION = "provision", "Provision"
-        READ = "read", "Read"
-        SUSPEND = "suspend", "Suspend"
-        RESUME = "resume", "Resume"
-        DELETE = "delete", "Delete"
-
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.PROTECT,
-        related_name="managed_community_projection",
-    )
-    binding = models.OneToOneField(
+    binding: ManagedIdentityBinding
+    binding_id: int
+    binding = models.OneToOneField(  # noqa: PIE794
         "users.ManagedIdentityBinding",
         on_delete=models.PROTECT,
-        related_name="managed_community_projection",
-    )
-    technical_handle = models.CharField(max_length=30, unique=True)
-    display_seed = models.CharField(max_length=255, blank=True)
+        related_name="managed_community_account",
+    )  # type: ignore
+    technical_handle = models.CharField(max_length=100)
     state = models.CharField(
-        max_length=24, choices=State.choices, default=State.PENDING
-    )
-    operation = models.CharField(
-        max_length=16, choices=Operation.choices, default=Operation.PROVISION
+        max_length=16, choices=State.choices, default=State.PENDING
     )
     remote_user_id = models.CharField(max_length=255, blank=True)
-    remote_profile_url = models.URLField(max_length=2048, blank=True)
-    managed_account = models.OneToOneField(
-        "mastodon.SocialAccount",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="managed_community_projection",
-    )
-    last_error_category = models.CharField(max_length=40, blank=True)
-    last_error_text = models.CharField(max_length=500, blank=True)
+    remote_profile_id = models.CharField(max_length=255, blank=True)
+    remote_actor_uri = models.CharField(max_length=2048, blank=True)
+    credential_data = models.JSONField(default=dict)
+    credential_id = models.CharField(max_length=255, blank=True)
+    credential_scopes = models.JSONField(default=list)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    attempt_count = models.PositiveIntegerField(default=0)
+    last_error_category = models.CharField(max_length=64, blank=True)
     last_error_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Access tokens are encrypted with NeoDB's existing Fernet-backed JSON
+    # field mechanism. The virtual field never becomes a plaintext SQL column.
+    access_token = jsondata.EncryptedTextField(
+        json_field_name="credential_data", default=""
+    )
+
     class Meta:
-        indexes = [
-            models.Index(fields=["state", "operation"], name="managed_comm_state_op"),
+        constraints: ClassVar = [
+            models.UniqueConstraint(
+                fields=["technical_handle"],
+                name="unique_managed_community_handle",
+            )
+        ]
+        indexes: ClassVar = [
+            models.Index(
+                fields=["state", "next_attempt_at"],
+                name="managed_comm_state_next",
+            )
         ]
 
     def __str__(self) -> str:
-        return f"{self.user_id}:{self.technical_handle}:{self.state}"
+        return f"{self.binding.user_id}:{self.technical_handle}:{self.state}"

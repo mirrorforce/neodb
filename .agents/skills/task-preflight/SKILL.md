@@ -1,37 +1,64 @@
 ---
 name: task-preflight
-description: Preflight NeoDB repository work against current authority, checkout state, scope, and one-writer safety before any non-trivial change.
+description: Establish current NeoDB authority, exact default/upstream identity, checkout safety, and one-writer scope before non-trivial work.
 ---
 
 # Task preflight
 
-Use this skill before any non-trivial work in this repository.
+Use before non-trivial repository work.
 
-1. Read the repository-root `AGENTS.md` if present, the current task handoff, the linked app contract, and the local owner Issue. Treat those sources as scope and authority; do not infer Product requirements from source code.
-2. Fresh-read the current default branch, `HEAD`, fork remote, and upstream remote. Record the exact commit identities before comparing or changing anything.
-3. Confirm the checkout is clean, the intended task branch is not the default branch, and no extra worktree, stash, untracked file, or unexplained local change overlaps the task. If ownership is unclear, stop.
-4. Classify the requested change. For `REPOSITORY_BEHAVIOR`, keep the write set to repository execution policy, tooling, documentation, and explicitly authorized behavior. Product schema/API semantics require a fresh owner authorization.
-5. State the accepted seams, validation commands, and stop conditions before editing. Keep secrets, private user data, credentials, generated runtime state, and production data out of the public fork and evidence.
+1. Fresh-read the current program handoff, owner Issue, repository-root
+   `AGENTS.md`, default branch, fork identity, and upstream identity. Current
+   Issues own WHAT/WHY/scope; do not infer them from historical branches or old
+   commits.
+2. Record the exact current default-branch commit/tree, admitted upstream
+   commit/tree, candidate commit/tree when one exists, branch, worktrees,
+   remotes, checkout state, and repository writer ownership.
+3. The ordinary source base is the fresh exact default-branch HEAD. Do not use a
+   task/integration/candidate branch as a persistent Product base. A non-default
+   source base is valid only when the current Human-approved authority explicitly
+   defines a bounded recovery/cutover and its termination condition.
+4. Confirm the checkout is clean and owned, the intended task branch is not the
+   default branch, and no extra worktree, stash, untracked file, unexplained local
+   change, open conflicting PR, or other writer overlaps the task. Stop on unknown
+   ownership or contradictory authority.
+5. Confirm the current authority's `PROGRAM_ISSUE`, `OWNER_ISSUE`, `REPOSITORY`,
+   `CURRENT_DEFAULT_SHA`, `UPSTREAM / ADMITTED_BASELINE`,
+   `CHANGE_CLASSIFICATION`, `MODE`, `AUTHORIZED_RESULT`, `AUTHORIZED_WRITESET`,
+   `NON_SCOPE`, `REQUIRED_SKILLS`, `VALIDATION`, `STOP_CONDITIONS`,
+   `PR_EXPECTATION`, `INTEGRATION_GATE`, and `SUBAGENTS` decision.
+6. Classify the change before editing. Product schema/API/runtime semantics,
+   ownership changes, migrations, dependencies, external integrations, or other
+   architecture-sensitive behavior require current owner authority; do not expand
+   scope to repair unrelated debt.
+7. Enforce one repository writer and `SUBAGENTS = PROHIBITED` unless current
+   authority explicitly changes it. Keep secrets, credentials, private user data,
+   generated runtime state, and production data out of the public fork/evidence.
 
 ## Validation tier and runtime identity
 
-Before execution, identify the validation tier:
+Select the validation tier before choosing a runner or service topology:
 
-- `T0 STATIC / CHECK`: run the current repository-native pre-commit, `ty`, and diff checks. This makes no Product runtime claim.
-- `T1 NEOdb TEST`: use the current source/head and current dependency lock with repository CI-native test conventions. Read the current `.github/workflows/tests.yml` and current Compose/runtime owner authority first; record required database, cache, and search services, cwd, env inputs, and the canonical command before execution. CI search-service identity and admitted runtime identity may differ; do not silently substitute one for the other.
-- `T2 OWNER INTEGRATION`: use only exact owner/task-admitted runtime and provider identities and report integration evidence for those identities.
+- `T0 STATIC / CHECK`: repository text, diff, formatting/lint/type/compile and
+  structural checks. T0 makes no Product runtime claim.
+- `T1 NEOdb TEST`: use the exact current task source and dependency lock with
+  repository CI-native test conventions. Fresh-read `.github/workflows/tests.yml`,
+  current dependency/test layout, and relevant runtime guidance before selecting
+  runner or services.
+- `T2 OWNER INTEGRATION`: use only the exact owner/task-admitted runtime and
+  provider identities required by the current claim.
 
-When T1 or T2 is requested, dispatch `.agents/skills/test-environment/SKILL.md`
-after this preflight and before the first runtime-dependent command. Do not
-run a test, Django/runtime, service, Compose, or owner-provider command as a
-tier claim until its complete admission record exists and
+When T1 or T2 is requested, dispatch
+`.agents/skills/test-environment/SKILL.md` after this preflight and before the
+first runtime-dependent command. Do not run a test, Django/runtime, service,
+Compose, migration, queue, search, storage, or owner-provider command as a tier
+claim until the complete admission record exists and
 `ENVIRONMENT_ADMISSION = PASS`. If admission is `BLOCKED`, continue only
-authorized T0/static work and record the requested tier as `BLOCKED` or
-`NOT_RUN`. `T1 PASS != T2 PASS`.
+currently authorized T0/static work and preserve the requested tier as
+`BLOCKED` or `NOT_RUN`. `T1 PASS != T2 PASS`.
 
-The validation application/runtime must correspond to the current task source/head. A stale prior-lane image is not acceptable merely because it starts. Reuse an image only with exact source provenance, dependency compatibility, and claim-compatible runtime identity; when the current Dockerfile supports it, prefer the full task SHA as the build identity. Do not redesign Docker packaging.
-
-The admission record must establish and record before the first runtime-dependent T1/T2 command:
+The admission record must establish before the first runtime-dependent T1/T2
+command:
 
 ```text
 ENVIRONMENT_ADMISSION
@@ -50,11 +77,17 @@ SERVICE_IDENTITIES
 SERVICE_HEALTH
 ```
 
-The runner platform comes from the current repository-native test authority; do not assume the primary host OS is valid. If current source or test dependencies require Linux APIs such as `fcntl`, native Windows is `PLATFORM_MISMATCH`, not a reason to patch Product source. Do not assume a production/runtime Docker image is a test image: inspect the current `Dockerfile`, `.dockerignore`, and `pyproject.toml` dependency groups before selecting an image. A containerized T1 runner must provide the current task source and test files, current dependency identity, dev/test dependencies, repository-native cwd, and repository-native command. If the production image intentionally excludes test dependencies or test files, use a current-source Linux dev/test-compatible environment; do not discover this through a failed pytest invocation. Continue to read the current workflow authority and declare its required services before execution. The full admission procedure and bounded failure labels are defined by `test-environment`; do not weaken it or copy volatile service/version values into this Skill.
+Do not assume the primary host OS, a production image, a Compose default, or a
+previous lane's service identity is valid for the current tier. CI service
+identity is not automatically Compose/owner-runtime identity. If current source
+requires Linux-only APIs, native Windows is `PLATFORM_MISMATCH`, not a reason to
+patch Product source. A stale image or moving tag is not current-source evidence.
 
 ## Baseline versus task-head validation
 
-When a repository-native check fails on the task head, first determine whether the exact clean-base behavior is already authoritative. If it is, use that baseline; otherwise reproduce the exact base in a bounded comparison when needed. Then compare the task head and record:
+When a repository-native check fails on the task head, determine whether the exact
+clean base already had the same behavior. When needed, reproduce the exact base
+and record:
 
 ```text
 BASELINE_VALIDATION_SOURCE_SHA
@@ -64,10 +97,37 @@ HEAD_VALIDATION_RESULT
 HEAD_DELTA_RESULT = NONE / NEW_REGRESSION / IMPROVED / UNKNOWN
 ```
 
-A baseline `FAIL` remains `FAIL` or bounded debt. An identical base/head failure is not a new task regression, but it is not a `PASS` merely because the task did not worsen it. A new task-head diagnostic is `NEW_REGRESSION`; if the comparison cannot establish the difference, use `UNKNOWN`. Compare diagnostics semantically (for example, code, path, and message), not only by exit code, count, or line number. Do not expand Product scope to repair unrelated baseline debt.
+An identical baseline/head failure is not a new task regression, but remains
+`FAIL` or bounded debt rather than becoming `PASS`. Compare diagnostic semantics,
+not only exit codes/counts.
 
-For repeatable Git/GitHub evidence, identify commits with full 40-character SHAs and identify trees with `git show -s --format=%T HEAD`; quote shell-sensitive revisions. After push, verify the remote branch full SHA, then re-read PR head metadata with a bounded reread. A single stale PR response immediately after push is `REMOTE_METADATA_PROPAGATION_DELAY`, not automatic authority drift; do not add sleep loops.
+For Git/GitHub evidence, use full 40-character commit SHAs and exact tree
+identities. After push, verify the remote task branch full SHA and re-read PR head
+metadata. A single stale PR response immediately after push is
+`REMOTE_METADATA_PROPAGATION_DELAY`, not automatic authority drift.
 
-Fail closed when authority, source identity, ownership, scope, or architecture is uncertain. Do not delegate to subagents unless the task authority explicitly permits it; this repository's default is `SUBAGENTS = PROHIBITED`.
+## Reproducible handoff
 
-The output is a short preflight record containing authority, repository identity, checkout state, write set, non-scope, planned validation, and any blocker. This skill does not decide Product scope or admit a moving upstream revision.
+End preflight with the minimum applicable frame:
+
+```text
+PROGRAM_ISSUE
+OWNER_ISSUE
+REPOSITORY
+CURRENT_DEFAULT_SHA
+UPSTREAM / ADMITTED_BASELINE
+CHANGE_CLASSIFICATION
+MODE
+AUTHORIZED_RESULT
+AUTHORIZED_WRITESET
+NON_SCOPE
+REQUIRED_SKILLS
+VALIDATION
+STOP_CONDITIONS
+PR_EXPECTATION
+INTEGRATION_GATE
+SUBAGENTS = PROHIBITED
+```
+
+State the next permitted action and carry forward every blocked/not-run check
+without tier promotion.

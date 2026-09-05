@@ -1,5 +1,8 @@
 """Tests for N+1 query optimizations."""
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 from django.db import connection, connections
 from django.test import Client
@@ -20,6 +23,7 @@ from catalog.models import (
 from journal.models import Collection, Mark, ShelfType, Tag
 from journal.models.common import prefetch_pieces_for_posts
 from journal.models.shelf import ShelfMember
+from takahe.models import Post
 from takahe.utils import Takahe
 from users.models import User
 
@@ -1441,3 +1445,90 @@ class TestCollectionMemberParent:
         # it again. Members must not add per-member parent dereferences
         # on top of that — that's what this test guards.
         assert len(parent_queries) <= 2
+
+
+@pytest.mark.django_db(databases="__all__")
+class TestItemPostsApiPrefetch:
+    """/api/item/{uuid}/posts/ serialises each post with to_mastodon_json,
+    which reads mentions, emojis and the author's domain; the queryset must
+    load those up front instead of once per post."""
+
+    @pytest.fixture(autouse=True)
+    def setup_data(self):
+        self.users = [
+            User.register(email=f"ipp{i}@example.com", username=f"ippuser{i}")
+            for i in range(4)
+        ]
+        self.book = Edition.objects.create(title="Item Posts Book")
+        for i, user in enumerate(self.users):
+            Mark(user.identity, self.book).update(
+                ShelfType.COMPLETE, f"comment {i}", i + 5, [], 0
+            )
+
+    def test_item_posts_api_bounded_queries(self):
+        posts = Post.objects.filter(author_id__in=[u.identity.pk for u in self.users])
+        assert posts.count() == 4
+
+        class StubIndex:
+            def search(self, query):
+                return SimpleNamespace(posts=posts, pages=1, total=4)
+
+        with (
+            patch("journal.apis.post.JournalIndex.instance", return_value=StubIndex()),
+            CaptureQueriesContext(connections["takahe"]) as ctx,
+        ):
+            response = Client().get(f"/api/item/{self.book.uuid}/posts/")
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 4
+
+        sql = [q["sql"] for q in ctx.captured_queries]
+        # one prefetch query each, never one per post
+        for table in ('"activities_post_mentions"', '"activities_post_emojis"'):
+            assert sum(table in s for s in sql) <= 1, table
+        # the author domain rides along on the post query via select_related
+        assert [s for s in sql if 'FROM "users_domain"' in s] == []
+
+
+@pytest.mark.django_db(databases="__all__")
+class TestOwnerIdentityPrefetchOnApiLists:
+    """MarkSchema.owner and friends must not cost a lookup per row.
+
+    ``select_related("owner")`` gives every row its own ``APIdentity``, so the
+    prefetch has to prime all of them, not just the first seen for a pk.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_data(self):
+        self.user = User.register(email="ownerpf@example.com", username="ownerpfuser")
+        for i in range(5):
+            book = Edition.objects.create(title=f"Owner Prefetch Book {i}")
+            Mark(self.user.identity, book).update(
+                ShelfType.WISHLIST, f"c{i}", None, [], 0
+            )
+        app = Takahe.get_or_create_app(
+            "Owner Prefetch Tests",
+            "https://example.org",
+            "https://example.org/callback",
+            owner_pk=self.user.identity.pk,
+        )
+        self.token = Takahe.refresh_token(app, self.user.identity.pk, self.user.pk)
+
+    def test_shelf_api_no_per_row_identity_queries(self):
+        client = Client()
+        with CaptureQueriesContext(connections["takahe"]) as ctx:
+            response = client.get(
+                "/api/me/shelf/wishlist",
+                HTTP_AUTHORIZATION=f"Bearer {self.token}",
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["count"] == 5
+        assert all(m["owner"]["username"] == "ownerpfuser" for m in payload["data"])
+        single_identity = [
+            q
+            for q in ctx.captured_queries
+            if "users_identity" in q["sql"]
+            and 'WHERE "users_identity"."id" =' in q["sql"]
+        ]
+        # one is the auth lookup; a per-row miss would add five more
+        assert len(single_identity) <= 1, single_identity

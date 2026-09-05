@@ -1,24 +1,31 @@
 ---
 name: acceptance-evidence
-description: Produce a compact, reproducible evidence packet for NeoDB owner delivery and upstream-baseline admission.
+description: Produce compact, reproducible NeoDB evidence for owner review, default-branch delivery, and integration-gate decisions.
 ---
 
 # Acceptance evidence
 
-Use this skill when preparing review evidence for a repository task or an upstream-traceable baseline.
+Use when validating or handing off a repository candidate.
 
 Capture evidence in this order:
 
-1. Authority: app contract, owner Issue, PR, change classification, write set, and non-scope.
-2. Identity: fork and upstream URLs, default branch, exact source commit, tree identity, and any separate VinylHub delivery identity.
-3. Diff: changed paths, clean/dirty state, and a statement that no Product feature schema/API or private data was added.
-4. Validation: exact commands and outcomes for native pre-commit/configuration checks, Django startup/system checks, migration checks or `neodb-init` smoke, targeted tests, and runtime/Compose checks. Distinguish PASS, FAIL, and NOT RUN with the reason.
-5. Review notes: accepted seams, baseline drift, remaining unknowns, and the next integration gate.
+1. Authority: current program handoff, owner Issue, PR, change classification,
+   authorized write set, and non-scope.
+2. Identity: fork/default branch, admitted upstream, exact source commit/tree,
+   task-branch/head identity, and any separate runtime/artifact identity relevant
+   to the claim.
+3. Diff: changed paths, clean/dirty state, and an explicit statement of Product,
+   runtime, schema, migration, dependency, service, data, or private-content
+   non-changes where applicable.
+4. Validation: exact commands and outcomes, separated by evidence tier. Preserve
+   baseline-versus-head results when they matter to the delivery claim.
+5. Review notes: accepted seams, authority/source drift, bounded unknowns, branch
+   cleanup state, and the next integration gate.
 
 ## T1/T2 admission gate
 
-For any runtime-dependent T1 or T2 evidence, require the admission method in
-`.agents/skills/test-environment/SKILL.md` to have run before the first
+For every runtime-dependent T1 or T2 claim, require the admission method in
+`.agents/skills/test-environment/SKILL.md` to run before the first
 runtime-dependent command. Preserve this complete record:
 
 ```text
@@ -38,12 +45,11 @@ SERVICE_IDENTITIES
 SERVICE_HEALTH
 ```
 
-Refuse to promote a tier when the record is missing, incomplete, contradictory,
-or has `ENVIRONMENT_ADMISSION != PASS`. Such evidence is `BLOCKED` or
-`NOT_RUN`, not `PASS`. T0 static evidence has no runtime claim and cannot be
-promoted to T1; T1 evidence cannot be promoted to T2. `T1 PASS != T2 PASS`.
-Do not copy volatile service or version matrices into the evidence Skill or
-durable guidance; identify current identities in the per-run record.
+Refuse tier promotion when the record is missing, incomplete, contradictory, or
+has `ENVIRONMENT_ADMISSION != PASS`. Such evidence is `BLOCKED` or `NOT_RUN`,
+not `PASS`. T0 static evidence has no runtime claim; `T1 PASS != T2 PASS`.
+Do not copy volatile runner/service/version matrices into this Skill or durable
+guidance; identify them in the current per-run evidence.
 
 Each evidence packet must identify, where applicable:
 
@@ -67,10 +73,45 @@ EXIT
 RESULT
 ```
 
-`RESULT` must be one of `PASS`, `FAIL`, `NOT_RUN`, `BLOCKED`, or `UNKNOWN`. Keep validation claims at their observed tier: never promote `T0` to `T1`, `T1` to `T2`, mock to live, or an old image to a current-head runtime. `T1 PASS != T2 PASS`.
+`RESULT` must be one of `PASS`, `FAIL`, `NOT_RUN`, `BLOCKED`, or `UNKNOWN`.
+Keep validation claims at their observed tier: never promote T0 to T1, T1 to T2,
+mock to live, or stale source/runtime evidence to the current head.
 
-For any baseline-versus-task-head comparison, report both source SHAs and validation results. `HEAD_DELTA_RESULT` must be one of `NONE`, `NEW_REGRESSION`, `IMPROVED`, or `UNKNOWN`; compare diagnostic semantics rather than treating matching exit codes or counts as proof. A baseline `FAIL` remains `FAIL` or bounded debt and must not be promoted to `PASS`.
+For any baseline-versus-task-head comparison, report both source SHAs and
+validation results. `HEAD_DELTA_RESULT` must be one of `NONE`,
+`NEW_REGRESSION`, `IMPROVED`, or `UNKNOWN`; compare diagnostic semantics rather
+than matching exit codes/counts. Baseline debt remains debt even when unchanged.
 
-Run commands with test-only values or isolated local services. Redact credentials and do not include secrets, tokens, private user data, database dumps, media, logs containing personal data, or uncontrolled environment output. Evidence must support replay without becoming a second source of Product requirements.
+## Delivery and branch evidence
 
-Fail closed when a required acceptance fact cannot be tied to an exact command, source identity, or authorized scope. Do not convert a static inspection into runtime approval or claim a clean result after an unrecorded failure.
+For a repository delivery, also preserve:
+
+```text
+DEFAULT_BRANCH
+DEFAULT_BASE_SHA
+TASK_BRANCH
+REVIEWED_HEAD_SHA
+REVIEWED_HEAD_TREE
+PR_BASE
+PR_HEAD
+MERGE_OR_REF_ACTION
+ACCEPTED_DEFAULT_SHA
+BRANCH_CLEANUP
+```
+
+A task branch is not a current source authority merely because it is reviewed or
+accepted as a candidate. After accepted delivery, fresh-read the default branch
+and report deletion/retention of the task branch truthfully. A current
+Human-approved recovery/cutover may use exceptional ancestry/ref mechanics, but
+its evidence must show how the operation terminates in one authoritative default
+branch without force rewriting shared history unless separately authorized.
+
+Run commands with test-only values or isolated disposable services. Redact
+credentials and exclude secrets, tokens, private user data, database dumps,
+private media, personal logs, and uncontrolled environment output. Evidence must
+support replay without becoming a second source of Product requirements.
+
+Fail closed when a required acceptance fact cannot be tied to exact authority,
+source identity, command/result, or authorized scope. Do not convert static
+inspection into runtime approval or claim a clean result after an unrecorded
+failure.

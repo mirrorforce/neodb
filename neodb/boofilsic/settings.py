@@ -70,10 +70,6 @@ env = environ.FileAwareEnv(
     # Search backend, in one of these formats:
     # typesense://user:insecure@127.0.0.1:8108/catalog
     NEODB_SEARCH_URL=(str, ""),
-    # Optional read-only Vinyl Catalog Core HTTP service boundary
-    VINYL_CATALOG_CORE_URL=(str, ""),
-    VINYL_CATALOG_CORE_CONNECT_TIMEOUT=(float, 2.0),
-    VINYL_CATALOG_CORE_READ_TIMEOUT=(float, 5.0),
     # EMAIL CONFIGURATION, in one of these formats:
     # "smtp://<username>:<password>@<host>:<port>"
     # "smtp+tls://<username>:<password>@<host>:<port>"
@@ -149,8 +145,7 @@ env = environ.FileAwareEnv(
     NEODB_ENABLE_LOGIN_BLUESKY=(bool, False),
     NEODB_ENABLE_LOGIN_THREADS=(bool, False),
     # Optional OneID/IDSEC OIDC configuration. Provider endpoints come from
-    # the configured discovery document; no provider-specific names are
-    # assumed here.
+    # the configured discovery document.
     NEODB_ONEID_ISSUER=(str, ""),
     NEODB_ONEID_CLIENT_ID=(str, ""),
     NEODB_ONEID_CLIENT_SECRET=(str, ""),
@@ -161,6 +156,7 @@ env = environ.FileAwareEnv(
     NEODB_ONEID_ACCEPTED_SOURCE_ATTRIBUTES=(list, []),
     NEODB_ONEID_CLOCK_SKEW=(int, 60),
     NEODB_ONEID_HTTP_TIMEOUT=(float, 10.0),
+    # Optional confidential Pixelfed Account Edge integration.
     NEODB_PIXELFED_ACCOUNT_EDGE_URL=(str, ""),
     NEODB_PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN=(str, ""),
     NEODB_PIXELFED_ACCOUNT_EDGE_TIMEOUT=(float, 10.0),
@@ -182,6 +178,9 @@ env = environ.FileAwareEnv(
 
 SECRET_KEY = env("NEODB_SECRET_KEY")
 DEBUG: bool = env("NEODB_DEBUG")
+# raw connection strings, kept for the read-only Environment settings page
+DB_URL: str = env("NEODB_DB_URL")
+TAKAHE_DB_URL: str = env("TAKAHE_DB_URL")
 DATABASES = {
     "takahe": env.db_url("TAKAHE_DB_URL"),
     "default": env.db_url("NEODB_DB_URL"),
@@ -195,14 +194,6 @@ for _db in DATABASES.values():
     _db["CONN_MAX_AGE"] = env("NEODB_DB_CONN_MAX_AGE")
     _db["CONN_HEALTH_CHECKS"] = True
 REDIS_URL = env("NEODB_REDIS_URL")
-# Read-only Product boundary to the Vinyl Catalog Core HTTP service.
-VINYL_CATALOG_CORE_URL: str = env("VINYL_CATALOG_CORE_URL", default="")
-VINYL_CATALOG_CORE_CONNECT_TIMEOUT: float = env.float(
-    "VINYL_CATALOG_CORE_CONNECT_TIMEOUT", default=2.0
-)
-VINYL_CATALOG_CORE_READ_TIMEOUT: float = env.float(
-    "VINYL_CATALOG_CORE_READ_TIMEOUT", default=5.0
-)
 CACHES = {"default": env.cache_url("NEODB_REDIS_URL")}
 _parsed_redis_url: parse.ParseResult = env.url("NEODB_REDIS_URL")
 RQ_QUEUES = {
@@ -218,7 +209,8 @@ RQ = {
     "JOB_CLASS": "common.rq.SiteJob",
 }
 
-_parsed_search_url: parse.ParseResult = env.url("NEODB_SEARCH_URL")
+SEARCH_URL: str = env("NEODB_SEARCH_URL")
+_parsed_search_url: parse.ParseResult = parse.urlparse(SEARCH_URL)
 SEARCH_BACKEND = None
 TYPESENSE_CONNECTION = {}
 if _parsed_search_url.scheme == "typesense":
@@ -269,6 +261,7 @@ ONEID_ACCEPTED_SOURCE_ATTRIBUTES: list[str] = env(
 )
 ONEID_CLOCK_SKEW: int = env("NEODB_ONEID_CLOCK_SKEW")
 ONEID_HTTP_TIMEOUT: float = env("NEODB_ONEID_HTTP_TIMEOUT")
+
 PIXELFED_ACCOUNT_EDGE_URL: str = env("NEODB_PIXELFED_ACCOUNT_EDGE_URL")
 PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN: str = env(
     "NEODB_PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN"
@@ -292,8 +285,6 @@ SITE_INFO = {
     "cdn_url": "https://cdn.jsdelivr.net" if DEBUG else "/jsdelivr",
     # "cdn_url": "https://cdn.jsdelivr.net",
     # "cdn_url": "https://fastly.jsdelivr.net",
-    "enable_login_email": ENABLE_LOGIN_EMAIL,
-    "enable_login_atproto": ENABLE_LOGIN_BLUESKY,
 }
 
 INVITE_ONLY = env("NEODB_INVITE_ONLY")
@@ -319,9 +310,9 @@ MASTODON_ALLOW_ANY_SITE = len(MASTODON_ALLOWED_SITES) == 0
 ENABLE_LOCAL_ONLY = env("NEODB_ENABLE_LOCAL_ONLY")
 
 # Timeout of requests to Mastodon, in seconds
+# env fallback for SiteConfig.mastodon_timeout, read via SiteConfig.system at runtime
 MASTODON_TIMEOUT = env("NEODB_LOGIN_MASTODON_TIMEOUT", default=5)
 THREADS_TIMEOUT = 30  # Threads is really slow when publishing post
-TAKAHE_REMOTE_TIMEOUT = MASTODON_TIMEOUT
 
 NEODB_USER_AGENT = f"NeoDB/{NEODB_VERSION} (+{SITE_INFO.get('site_url', 'undefined')})"
 TAKAHE_USER_AGENT = NEODB_USER_AGENT
@@ -354,8 +345,6 @@ BGG_API_TOKEN = env("BGG_API_TOKEN")
 DEEPL_API_KEY = env("DEEPL_API_KEY")
 LT_API_URL = env("LT_API_URL").rstrip("/")
 LT_API_KEY = env("LT_API_KEY")
-
-SITE_INFO["translate_enabled"] = bool(DEEPL_API_KEY) or bool(LT_API_URL)
 
 DOWNLOADER_PROXY_LIST = env("NEODB_DOWNLOADER_PROXY_LIST")
 DOWNLOADER_BACKUP_PROXY = env("NEODB_DOWNLOADER_BACKUP_PROXY", default="")
@@ -425,7 +414,8 @@ INSTALLED_APPS += [
     "legacy.apps.LegacyConfig",
 ]
 
-for app in env("NEODB_EXTRA_APPS"):
+EXTRA_APPS: list[str] = env("NEODB_EXTRA_APPS")
+for app in EXTRA_APPS:
     INSTALLED_APPS.append(app)
 
 MIDDLEWARE = [
@@ -763,9 +753,10 @@ DEACTIVATE_AFTER_UNREACHABLE_DAYS = 365
 
 DEFAULT_RELAY_SERVER = "https://relay.neodb.net/inbox"
 
-_SENTRY_DSN: str = env("NEODB_SENTRY_DSN")
-if _SENTRY_DSN:
-    _SENTRY_SAMPLE_RATE: float = env("NEODB_SENTRY_SAMPLE_RATE")
+SENTRY_DSN: str = env("NEODB_SENTRY_DSN")
+# only cast when Sentry is on: a blank value must not break startup without it
+SENTRY_SAMPLE_RATE: float = env("NEODB_SENTRY_SAMPLE_RATE") if SENTRY_DSN else 0.0
+if SENTRY_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
     from sentry_sdk.integrations.logging import ignore_logger
@@ -781,7 +772,7 @@ if _SENTRY_DSN:
     if len(sys.argv) > 1 and sentry_env in ("manage.py", "django-admin"):
         sentry_env = sys.argv[1]
     sentry_sdk.init(
-        dsn=_SENTRY_DSN,
+        dsn=SENTRY_DSN,
         environment=sentry_env or "unknown",
         integrations=[
             DjangoIntegration(),
@@ -789,7 +780,7 @@ if _SENTRY_DSN:
         ],
         release=NEODB_VERSION,
         send_default_pii=True,
-        traces_sample_rate=_SENTRY_SAMPLE_RATE,
+        traces_sample_rate=SENTRY_SAMPLE_RATE,
         _experiments={"enable_logs": True},
     )
 

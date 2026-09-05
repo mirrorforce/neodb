@@ -1,9 +1,8 @@
-from django.http import JsonResponse
+from django.http import HttpRequest, HttpResponseBase, JsonResponse
 from django.shortcuts import redirect
 from django.views.decorators.http import require_GET
 
-from users.managed_community import bootstrap_managed_identity
-from users.managed_identity import login_managed_identity
+from users.managed_identity import bootstrap_managed_identity, login_managed_identity
 from users.oneid import (
     OneIDClient,
     OneIDConfigurationError,
@@ -13,8 +12,8 @@ from users.oneid import (
 )
 
 
-@require_GET
-def oneid_start(request):
+@require_GET  # type: ignore
+def oneid_start(request: HttpRequest) -> HttpResponseBase:
     try:
         authorization_url = OneIDClient().authorization_url(request)
     except OneIDConfigurationError:
@@ -24,8 +23,8 @@ def oneid_start(request):
     return redirect(authorization_url)
 
 
-@require_GET
-def oneid_callback(request):
+@require_GET  # type: ignore
+def oneid_callback(request: HttpRequest) -> HttpResponseBase:
     try:
         identity = OneIDClient().verify_callback(request)
     except OneIDConfigurationError:

@@ -7,4 +7,3 @@ class JournalConfig(AppConfig):
 
     def ready(self):
         from . import apis  # noqa
-        from .jobs import managed_community  # noqa: F401

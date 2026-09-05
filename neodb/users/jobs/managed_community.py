@@ -3,26 +3,21 @@ from datetime import timedelta
 from loguru import logger
 
 from common.models import BaseJob, JobManager
-from users.managed_community import (
-    reconcile_managed_community_dispatches,
-    reconcile_managed_community_observations,
-)
+from users.managed_community import reconcile_managed_community_accounts
 
 
 @JobManager.register
-class ManagedCommunityReconciler(BaseJob):
-    """Sweep only managed Community durable responsibilities."""
+class ManagedPixelfedAccountReconciler(BaseJob):
+    """Sweep durable managed-account responsibilities after lost enqueues."""
 
     @classmethod
     def get_interval(cls) -> timedelta:
         return timedelta(minutes=1)
 
-    def run(self):
-        observations = reconcile_managed_community_observations()
-        result = reconcile_managed_community_dispatches()
-        if observations or result.claimed:
+    def run(self) -> None:
+        processed = reconcile_managed_community_accounts()
+        if processed:
             logger.info(
-                "Managed Community reconciliation: "
-                f"observed={observations} claimed={result.claimed} "
-                f"dispatched={result.dispatched} enqueue_errors={result.enqueue_errors}"
+                "Managed Pixelfed account reconciliation processed {} rows",
+                processed,
             )

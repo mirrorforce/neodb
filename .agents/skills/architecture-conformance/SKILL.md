@@ -1,17 +1,28 @@
 ---
 name: architecture-conformance
-description: Qualify NeoDB changes against its existing Django, Takahē, persistence, queue, search, and runtime seams without inventing Product architecture.
+description: Qualify NeoDB changes against existing Django and Takahē seams without inventing product architecture.
 ---
 
 # Architecture conformance
 
-Use this skill when a task touches NeoDB boundaries, runtime behavior, migrations, or a proposed integration seam.
+Use when reviewing or implementing an architecture-sensitive repository change.
 
-- Start from the current upstream-traceable tree and inspect the nearest existing app, model, API, migration, job, and Compose entrypoint. Reuse native boundaries and naming.
-- Qualify only the seam named by the task. For the admitted Product-backend baseline, inspect User/session/account, APIdentity/Takahē, Journal Review/Shelf/Mark/Collection, SocialAccount/MastodonAccount, PostgreSQL migrations, RQ/Redis, Typesense, and Docker/runtime wiring.
-- Record whether the seam is present, how it is exercised, and whether the task introduces any delta. Existing upstream `CollectionItem` code is baseline context, not permission for new Product feature work.
-- Preserve the split between the `neodb` Django project and the adjacent `takahe` project, including their database and task-queue conventions. Use `neodb-init` for schema initialization as documented upstream.
+- Fresh-read the current owner Issue and identify the native NeoDB seam that
+  actually owns the authorized behavior: Django/session/API, Community access
+  mediation, Catalog/import/media, or another explicitly named owner seam.
+  Current Issues supply the lane; this Skill must not make a lane permanent.
+- Prefer the smallest upstream-conformant delta. Preserve existing Django,
+  Takahē, persistence, session, queue, search, and runtime ownership and native
+  lifecycle boundaries.
+- Fail closed on a generic framework, parallel Product model, duplicate
+  authority, invented adapter/orchestration layer, or unaccepted dependency,
+  persistence, schema, API, migration, or runtime change. Do not use old
+  downstream code to infer Product semantics.
+- Check imports, migrations, settings, URLs, tests, and relevant documentation
+  for accidental dependency on excluded Product areas or cross-owner behavior.
+  Treat architecture drift as a stop condition, not a reason to expand scope.
+- For governance or documentation-only work, qualify the repository method and
+  verify that no Product or runtime behavior change is introduced.
 
-Fail closed if the requested work needs a new owner, generic framework/provider graph, Product schema/API semantics, identity model, external integration, migration policy, or deployment architecture not already authorized. Do not hide an architecture change inside bootstrap documentation or tooling.
-
-The output is a bounded seam qualification: paths inspected, native convention preserved, observed change (if any), validation needed, and unresolved architecture questions. This skill does not grant Product scope or acceptance authority.
+Report the qualifying native seam, changed paths, preserved non-scope, and any
+bounded unknown that prevents a stronger conformance claim.

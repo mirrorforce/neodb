@@ -11,6 +11,7 @@ from catalog.models import Edition
 from journal.models import Comment, CrosspostRetry, Piece, Review
 from journal.models.atproto import DOCUMENT_NSID
 from mastodon.models import BlueskyAccount, MastodonAccount, ThreadsAccount
+from mastodon.models.bluesky_oauth import OAuthError, OAuthRejectedError
 from users.jobs.cleanup import prune_crosspost_retries
 from users.models import User
 
@@ -137,6 +138,39 @@ class TestCrosspostRetryRecording:
         comment._sync_to_social_accounts(0)
         failure = CrosspostRetry.objects.get(piece=comment, platform="bluesky")
         assert failure.error_type == CrosspostRetry.ErrorType.auth
+
+    def test_bluesky_unrefreshable_session_recorded_as_auth(
+        self, user, comment, monkeypatch
+    ):
+        # the usual expiry: the authorization server refuses the refresh
+        # token, which surfaces as an OAuth error rather than an XRPC one
+        _link_bluesky(user)
+
+        def fail(self, **kwargs):
+            raise OAuthRejectedError(
+                "https://auth.example/token returned 400: invalid_grant"
+            )
+
+        monkeypatch.setattr(BlueskyAccount, "post", fail)
+        comment._sync_to_social_accounts(0)
+        failure = CrosspostRetry.objects.get(piece=comment, platform="bluesky")
+        assert failure.error_type == CrosspostRetry.ErrorType.auth
+        assert "invalid_grant" in failure.message
+
+    def test_bluesky_token_endpoint_outage_is_not_auth(
+        self, user, comment, monkeypatch
+    ):
+        # a transport failure keeps the session valid, so it must not tell
+        # the owner their authorization expired
+        _link_bluesky(user)
+
+        def fail(self, **kwargs):
+            raise OAuthError("error requesting https://auth.example/token: timed out")
+
+        monkeypatch.setattr(BlueskyAccount, "post", fail)
+        comment._sync_to_social_accounts(0)
+        failure = CrosspostRetry.objects.get(piece=comment, platform="bluesky")
+        assert failure.error_type == CrosspostRetry.ErrorType.other
 
     def test_threads_failure_recorded(self, user, comment, monkeypatch):
         _link_threads(user)

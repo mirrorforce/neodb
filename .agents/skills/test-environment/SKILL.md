@@ -11,95 +11,167 @@ runner, its database/cache/search dependencies, or an owner runtime. Dispatch
 this Skill after task-preflight and before the first such command. T0 static
 inspection and repository text checks may run without runtime admission.
 
-This is a hard admission gate, not a best-effort diagnostic. A T1 or T2
-claim is legitimate only when the admission record says
-`ENVIRONMENT_ADMISSION = PASS`. If any required fact is unknown, missing,
-contradictory, or cannot be proven for the current source, record
-`ENVIRONMENT_ADMISSION = BLOCKED` and do not run a command as T1 or T2.
+This is a hard admission gate. A T1 or T2 claim is legitimate only when the
+record says `ENVIRONMENT_ADMISSION = PASS`. Missing, contradictory, substituted,
+or unproven prerequisites produce `BLOCKED`; do not run the dependent command
+merely to rediscover a known environment mismatch.
+
+## Current VinylHub machine-local canonical T1 profile
+
+The current VinylHub machine-local T1 profile is concrete because repeated
+qualification already converged on this environment. Do not reconstruct it from
+an older M0 note, the native production Compose defaults, or a remembered prior
+failure.
+
+```text
+SOURCE
+  exact current NeoDB task SHA/tree
+  exact current uv dependency lock
+
+TEST RUNNER
+  Python 3.14
+  repository test source + dev/test dependencies present
+  cwd = neodb
+
+LOCAL DOCKER SERVICES
+  Product PostgreSQL
+    image = postgres:14-alpine
+    RepoDigest = sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
+    accepted server = PostgreSQL 14.24
+
+  Takahe PostgreSQL
+    same admitted PostgreSQL image/version family
+
+  Redis
+    image = redis:alpine
+    RepoDigest = sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    accepted server = Redis 8.10.1
+
+SEARCH
+  Typesense = REMOTE
+  exact version = 30.1
+  purpose = test-only
+  data = disposable
+  local Windows Typesense = PROHIBITED / NOT REQUIRED
+  local Docker Typesense for this profile = NOT REQUIRED
+```
+
+The remote Typesense endpoint and credential are machine-local/private runtime
+inputs. They must not be committed, printed, copied into Issue/PR evidence, or
+reconstructed from a public document. Use the configured local secure-store
+mechanism and a separate scoped T1 key. Do not use the bootstrap/admin key as the
+routine test credential. Never print the plaintext key or full
+`NEODB_SEARCH_URL`.
+
+The absence of a local Typesense container is **not** a T1 blocker for this
+profile. Native `compose.yml` may retain an upstream runtime Typesense default;
+that service is not the machine-local VinylHub T1 authority.
+
+The canonical commands, from `neodb`, are:
+
+```text
+uv run --project .. python manage.py compilemessages -l zh_Hans
+uv run --project .. python -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml
+```
+
+Do not skip search tests, substitute another Typesense version, lower coverage,
+change the canonical command, or create a local Typesense workaround to
+manufacture PASS.
+
+This profile is owner T1. App-owned T3 composition is a separate evidence tier
+and may use a different exact service topology; T3 evidence must not silently
+replace this T1 profile.
 
 ## Required admission record
 
-Before the first runtime-dependent command, record every field below using
-current authority and safe, bounded evidence. Do not include credentials,
-tokens, private endpoints, private user data, uncontrolled environment dumps,
-or service response bodies when a result category is sufficient.
+Before the first runtime-dependent command, record every material field using
+current authority and bounded evidence. Do not retain secrets or private endpoint
+values.
 
 ```text
 ENVIRONMENT_ADMISSION = PASS / BLOCKED
 VALIDATION_TIER = T1 NEOdb TEST / T2 OWNER INTEGRATION
-RUNNER_PLATFORM = <platform and architecture>
-RUNNER_IDENTITY = <exact runner, image, checkout or host identity>
-SOURCE_SHA = <full 40-character source commit>
-SOURCE_TREE = <full source tree identity>
-DEPENDENCY_IDENTITY = <lockfile/environment identity and provenance>
-TEST_SOURCE_AVAILABLE = YES / NO / UNKNOWN
-DEV_TEST_DEPS_AVAILABLE = YES / NO / UNKNOWN
-CWD = <repository-native working directory>
-CANONICAL_COMMAND = <exact command to be run>
-REQUIRED_SERVICES = <services required by this claim>
-SERVICE_IDENTITIES = <exact admitted identity for each required service>
-SERVICE_HEALTH = <bounded readiness and reachability result for each service>
+RUNNER_PLATFORM
+RUNNER_IDENTITY
+SOURCE_SHA
+SOURCE_TREE
+DEPENDENCY_IDENTITY
+TEST_SOURCE_AVAILABLE
+DEV_TEST_DEPS_AVAILABLE
+CWD
+CANONICAL_COMMAND
+REQUIRED_SERVICES
+SERVICE_IDENTITIES
+SERVICE_HEALTH
+
+# required for the current machine-local T1 profile
+PRODUCT_POSTGRES_ADMISSION
+TAKAHE_POSTGRES_ADMISSION
+REDIS_ADMISSION
+TYPESENSE_MODE = REMOTE
+TYPESENSE_VERSION = 30.1
+TYPESENSE_ENDPOINT_REACHABILITY
+TYPESENSE_HEALTH
+TYPESENSE_AUTH
+TYPESENSE_DATA_ISOLATION = PASS / BLOCKED
+TYPESENSE_SECRET_SOURCE = LOCAL_SECURE_STORE
+SECRET_VALUE_RETAINED_IN_REPORT = NO
 ```
 
-`SERVICE_IDENTITIES` must distinguish the identity required by the current
-claim from a merely similar CI, Compose, or runtime service. `SERVICE_HEALTH`
-must prove that every required service is real, reachable from the runner, and
-ready for the operation; process-started or HTTP-only evidence is insufficient
-when the current operation also needs migrations, queues, storage, or another
-readiness condition.
+For T1, `SERVICE_IDENTITIES` must match the profile above unless a later current
+Human-approved environment qualification explicitly supersedes it. For T2, use
+the exact owner runtime/provider identities required by the current owner Issue;
+`T1 PASS != T2 PASS`.
 
 ## Admission procedure
 
-1. Fresh-read the current owner Issue, linked app authority, repository
-   guidance, and the current source/runtime authority relevant to the claim.
-   For T1, read the current CI workflow, dependency lock, test layout, and
-   runner instructions. For T2, read the exact owner runtime/provider
-   authority. Do not copy volatile Python, database, cache, search, image, or
-   service-version values into this Skill or durable guidance.
-2. Select the tier before selecting a runner. T1 follows current repository
-   CI-native test conventions. T2 requires exact task-admitted owner runtime
-   and provider identities. `T1 PASS != T2 PASS`; a passing lower tier never
-   promotes a higher tier.
-3. Prove `RUNNER_PLATFORM` and `RUNNER_IDENTITY` against that tier. If the
-   current source requires Linux-only APIs, native Windows is
-   `PLATFORM_MISMATCH` and cannot be admitted as T1. An incompatible host is
-   `BLOCKED`, not a reason to patch Product source or weaken the claim.
-4. Prove that `SOURCE_SHA` and `SOURCE_TREE` are the source actually mounted,
-   checked out, or built into the runner. A stale prior-lane image, moving
-   tag, or default artifact is not current-source evidence. Prove
-   `DEPENDENCY_IDENTITY` from the current lock and environment provenance.
-5. Prove `TEST_SOURCE_AVAILABLE` and `DEV_TEST_DEPS_AVAILABLE` before running
-   tests. A production/runtime image is not automatically a test runner. If
-   it omits current tests or development/test dependencies, it is not admitted
-   for T1; use an exact current-source, test-compatible runner only when the
-   current authority permits it.
-6. Record the repository-native `CWD` and exact `CANONICAL_COMMAND` before
-   execution. Do not replace the command with an easier probe and call the
-   result T1 or T2.
-7. Enumerate `REQUIRED_SERVICES` from the current authority and prove each
-   `SERVICE_IDENTITY` and `SERVICE_HEALTH`. A CI service identity does not
-   automatically become a Compose or owner-runtime identity. Required
-   endpoints must be real, reachable, and ready; dummy, intentionally
-   unreachable, or unspecified endpoints are forbidden.
-8. If a required service cannot run with the exact admitted identity on the
-   selected host, classify the result as `SERVICE_HOST_INCOMPATIBLE` or
-   `SERVICE_NOT_READY` and set admission to `BLOCKED`. Do not perform an
-   ad-hoc service-version substitution, point the endpoint nowhere, or remove
-   a prerequisite to manufacture PASS unless current authority explicitly
-   admits that identity.
-9. Set `ENVIRONMENT_ADMISSION = PASS` only when all required fields are
-   proven and mutually consistent. Preserve the record with the command
-   result. If admission is `BLOCKED`, stop only the T1/T2 claim: continue
-   authorized T0/static validation and report the blocked tier accurately.
+1. Fresh-read the current owner Issue, linked app authority, repository guidance,
+   current default source, current CI/test workflow, dependency lock, and this
+   Skill. Current authority may supersede this profile only explicitly.
+2. Select the evidence tier before runner/service selection. Do not infer T1 from
+   production Compose or T2 from T1 CI conventions.
+3. Prove the exact task source SHA/tree and exact lock are the source/dependencies
+   used by the runner. A stale image, moving tag, old branch, or prior-lane
+   checkout is not current evidence.
+4. For machine-local T1, prove Python 3.14, test source and dev/test dependencies
+   before running the canonical commands.
+5. Start/admit only the required local Docker PostgreSQL and Redis services using
+   the accepted identities above. Prove database/cache reachability and readiness;
+   process start alone is insufficient.
+6. Admit remote Typesense 30.1 directly. Prove endpoint reachability, exact
+   version, `/health`, authenticated access required by the test suite, and the
+   test-only/disposable data designation before setting admission to PASS.
+7. Obtain the scoped Typesense T1 credential only from the configured local
+   secure store. Keep it in process scope only, expose it to NeoDB through
+   `NEODB_SEARCH_URL`, redact the URL from output, and clear plaintext process
+   state after the run.
+8. Record `CWD` and both canonical commands before execution. The full pytest
+   command is the T1 claim; a focused subset may be diagnostic evidence but cannot
+   replace canonical T1.
+9. Set `ENVIRONMENT_ADMISSION = PASS` only when all material fields are proven and
+   mutually consistent. If admission is blocked, stop the dependent T1/T2 command
+   and continue only separately authorized T0/static work.
 
-Re-admit after changing source, dependency identity, runner, service
-identity, or any prerequisite that could affect readiness. Ordinary
-application failures after a valid admission remain execution evidence; do
-not turn this Skill into a generic diagnostics or orchestration framework.
+Re-admit after changing source, dependency identity, runner, PostgreSQL/Redis
+identity, remote Typesense identity/readiness, credential preconditions, or any
+other claim-relevant prerequisite. Ordinary test failures after a valid admission
+are source/baseline evidence, not environment-admission failures.
+
+## Hard vetoes
+
+```text
+local Windows Typesense startup used for the current machine-local T1
+local Docker Typesense substituted for the admitted remote 30.1 profile
+Typesense version changed from 30.1 without current Human-approved requalification
+bootstrap/admin Typesense key used as routine T1 credential
+dummy or intentionally unreachable required endpoint
+native Compose defaults treated as T1 authority merely because they exist
+focused subset represented as canonical full T1
+T1 evidence promoted to T2 or T3
+secret value or full NEODB_SEARCH_URL retained in evidence
+```
 
 ## Bounded failure labels
-
-Use only the label that the evidence supports:
 
 ```text
 PLATFORM_MISMATCH
@@ -107,22 +179,21 @@ RUNNER_NOT_ADMITTED
 ARTIFACT_IDENTITY_MISMATCH
 SERVICE_NOT_READY
 SERVICE_HOST_INCOMPATIBLE
+CREDENTIAL_PRECONDITION_MISSING
 MIGRATION_NOT_READY
 SOURCE_TEST_FAILURE
 OWNER_RUNTIME_FAILURE
 UNKNOWN
 ```
 
-The #35/#36 delivery is the motivating example: the local host could not run
-CI-aligned Typesense, so `LOCAL_T1` remained `BLOCKED`. The focused run was
-diagnostic evidence only; an unreachable or substituted search endpoint was
-not promoted to T1 evidence.
-
 ## Evidence rule
 
-Acceptance evidence must include the admission record and exact source/tree
-identity for every T1/T2 claim. An evidence packet with
-`ENVIRONMENT_ADMISSION = BLOCKED`, a missing admission record, or an
-unproven required field must report that tier as `BLOCKED` or `NOT_RUN`; it
-must not report `PASS`. Static checks remain T0 evidence and must not be
-promoted to T1 or T2.
+Acceptance evidence must preserve the complete admission record and exact
+source/tree identity for every T1/T2 claim. The previously proven remote
+Typesense path reached the full canonical suite; therefore an executor must not
+reopen the superseded local-Typesense blocker unless current evidence proves a
+new change in that admitted path.
+
+`ENVIRONMENT_ADMISSION = BLOCKED`, a missing field, or an unproven required
+service means the dependent tier is `BLOCKED`/`NOT_RUN`, not PASS. Static checks
+remain T0 and cannot be promoted.

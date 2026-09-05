@@ -610,7 +610,7 @@ class Identity(models.Model):
         if not is_valid_url(host_meta_url):
             return f"https://{domain}/.well-known/webfinger?resource={{uri}}"
         with httpx.Client(
-            timeout=settings.TAKAHE_REMOTE_TIMEOUT,
+            timeout=SiteConfig.system.mastodon_timeout,
             headers={"User-Agent": settings.TAKAHE_USER_AGENT},
         ) as client:
             try:
@@ -652,7 +652,7 @@ class Identity(models.Model):
         if not is_valid_url(resolved_webfinger_url):
             return None, None
         with httpx.Client(
-            timeout=settings.TAKAHE_REMOTE_TIMEOUT,
+            timeout=SiteConfig.system.mastodon_timeout,
             headers={"User-Agent": settings.TAKAHE_USER_AGENT},
         ) as client:
             try:
@@ -817,7 +817,7 @@ class Identity(models.Model):
                 self.icon.url
                 if self.icon
                 else self.icon_uri
-                or (settings.SITE_INFO["site_url"] + settings.SITE_INFO["user_icon"])
+                or (settings.SITE_INFO["site_url"] + SiteConfig.system.user_icon)
             )
         else:
             return f"/proxy/identity_icon/{self.pk}/"
@@ -1814,12 +1814,13 @@ class Post(models.Model):
         language = self.language
         if self.language == "":
             language = None
+        content = self.safe_content_remote()
         value = {
             "id": str(self.pk),
             "uri": self.object_uri,
             "created_at": format_ld_date(self.published),
             "account": self.author.to_mastodon_json(),
-            "content": self.safe_content_remote(),
+            "content": content,
             "language": language,
             "visibility": visibility_mapping[self.visibility],
             "sensitive": self.sensitive,
@@ -1859,7 +1860,7 @@ class Post(models.Model):
             "reblog": None,
             "poll": None,  # self.type_data.to_mastodon_json(self, identity) if isinstance(self.type_data, QuestionData) else None,
             "card": card.to_mastodon_json() if card else None,
-            "text": self.safe_content_remote(),
+            "text": content,
             "edited_at": format_ld_date(self.edited) if self.edited else None,
             "application": self.application.to_mastodon_status_json()
             if self.application

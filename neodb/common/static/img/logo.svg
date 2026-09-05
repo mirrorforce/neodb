@@ -15,6 +15,8 @@
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
+  <title>T1B-1 rev-02 transparent base in the current NeoDB title image</title>
+  <desc>The current production NeoDB wordmark paths paired with the deep-palette T1B-1 five-stem transparent base icon.</desc>
   <sodipodi:namedview
      id="namedview21"
      pagecolor="#ffffff"
@@ -50,66 +52,24 @@
        height="60.515274"
        id="rect4965" />
   </defs>
+  <defs id="t1b1-knockout-defs">
+    <mask
+       id="t1b1-asterisk-knockout"
+       maskUnits="userSpaceOnUse"
+       x="16"
+       y="16"
+       width="64"
+       height="64">
+      <rect x="16" y="16" width="64" height="64" fill="#ffffff" />
+      <path d="M57 30.5V22 M57 30.5L65.085 27.873 M57 30.5L61.996 37.377 M57 30.5L52.004 37.377 M57 30.5L48.915 27.873" fill="none" stroke="#000000" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" />
+    </mask>
+  </defs>
   <g
-     id="_WTrHMt3eZfxcQKrYJirRK"
-     transform="matrix(0.95294163,0,0,0.95294163,-45.741197,-190.14988)">
-    <path
-       id="_1MYZsbAYvxe5D-50H3pho"
-       fill="#000000"
-       transform="matrix(1.2602785,0,0,1.2602785,27.519653,192.79657)"
-       data-type="polygon"
-       d="M 82.1,74 75,81.1 v 0 L 82.1,74 74,65.9 v 0 z" />
-    <path
-       id="_oL3QJlwkbW1Nmdh3qAlDC"
-       fill="#000000"
-       transform="matrix(1.2602785,0,0,1.2602785,27.45702,193.17499)"
-       data-type="rect"
-       data-x="64.5"
-       data-y="51.5"
-       data-width="0"
-       data-height="9.8"
-       d="M 64.5,51.5" />
-    <path
-       id="_sK1htog-8Op55rgRI5hDg"
-       d="m 61.1,52.9 v 0 0 l -4.9,4.9 c 2.5,1.2 4.3,3.8 4.3,6.9 0,4.2 -3.4,7.6 -7.6,7.6 -3,0 -5.6,-1.8 -6.9,-4.3 L 40.1,73.9 40,74 61,95 69.1,86.9 v 0 c -3.2,0 -5.9,-2.6 -5.9,-5.9 0,-3.3 2.6,-5.9 5.9,-5.9 3.2,0 5.9,2.6 5.9,5.9 l 7.1,-7.1 -8.1,-8 v 0 l -0.6,-0.6 c 0.1,0 0.3,0 0.4,0 3.2,0 5.9,-2.6 5.9,-5.9 0,-1.5 -0.6,-2.8 -1.5,-3.9 -1,-0.9 -2.4,-1.5 -3.9,-1.5 -3.2,0 -5.9,2.6 -5.9,5.9 0,0.1 0,0.3 0,0.4 L 68,59.9 v 0 z"
-       fill="#083b66"
-       transform="matrix(1.2602785,0,0,1.2602785,27.51993,192.73364)"
-       style="fill:#ffb380" />
-    <path
-       id="_OMWHsyuaoclMfPE9tvM7V"
-       d="m 46.5,49.5 c -4.2,0 -7.6,-3.4 -7.6,-7.6 0,-3 1.7,-5.6 4.2,-6.8 l -5.9,-5.9 v 0 l -21,21 22.2,22.2 9.5,-9.5 c -0.3,0.6 -0.4,1.3 -0.4,2 0,2.9 2.4,5.3 5.3,5.3 2.9,0 5.3,-2.4 5.3,-5.3 0,-2.9 -2.4,-5.3 -5.3,-5.3 -0.7,0 -1.4,0.1 -2,0.4 l 8.6,-8.6 -6,-6 c -1.3,2.3 -3.9,4.1 -6.9,4.1 z"
-       fill="#8dcaff"
-       transform="matrix(1.2602785,0,0,1.2602785,27.583487,192.79709)" />
-    <path
-       id="_jAk8zpl6O80_21e1JT4hk"
-       d="m 83.3,27.4 -8.7,-8.7 c 0.1,0 0.3,0 0.4,0 3.2,0 5.9,-2.6 5.9,-5.9 C 80.9,9.6 78.3,7 75,7 c -3.2,0 -5.9,2.6 -5.9,5.9 0,0.1 0,0.3 0,0.4 L 61,5.2 l -21,21 -0.7,0.8 -0.4,0.4 9.5,9.5 c -0.6,-0.2 -1.2,-0.3 -1.8,-0.3 -2.9,0 -5.3,2.4 -5.3,5.3 0,2.9 2.4,5.3 5.3,5.3 2.9,0 5.3,-2.4 5.3,-5.3 0,-0.5 -0.1,-0.9 -0.2,-1.4 0,-0.2 -0.1,-0.3 -0.1,-0.5 l 0.5,0.5 9.2,9.2 0.4,-0.4 0.8,-0.8 6.8,-6.8 c 0,0 0,0 0,0 -3.2,0 -5.9,-2.6 -5.9,-5.9 0,-3.3 2.6,-5.9 5.9,-5.9 3.2,0 5.9,2.6 5.9,5.9 0,0 0,0 0,0 z"
-       fill="#c0d9b4"
-       transform="matrix(1.2602785,0,0,1.2602785,27.709267,192.98645)" />
-    <path
-       id="_GDSYpBtYoW2GJpRZoPCot"
-       fill="#000000"
-       transform="matrix(1.2602785,0,0,1.2602785,27.456932,192.67065)"
-       data-type="rect"
-       data-x="61.1"
-       data-y="52.9"
-       data-width="0"
-       data-height="0"
-       d="M 61.1,52.9" />
-    <path
-       id="_NldltLD5fZQlQrgFsakaC"
-       fill="#000000"
-       transform="matrix(1.2602785,0,0,1.2602785,27.456932,192.67065)"
-       data-type="rect"
-       data-x="61.1"
-       data-y="52.9"
-       data-width="0"
-       data-height="0"
-       d="M 61.1,52.9" />
-    <path
-       id="_TbX_b0jxU8J0Cb3YWVDy6"
-       d="m 51.6,40.5 h 0.3 L 51.5,40 c 0,0.1 0,0.3 0.1,0.5 z"
-       fill="#000000"
-       transform="matrix(1.2602785,0,0,1.2602785,27.708767,192.98587)" />
+     id="t1b1-symbol-fieldless-enlarged-knockout-asterisk"
+     transform="translate(-20,-6.19682) scale(1.25)">
+    <path fill="#8EAD78" mask="url(#t1b1-asterisk-knockout)" d="M 22 16 L 74 16 A 6 6 0 0 1 80 22 L 80 38 A 6 6 0 0 1 74 44 L 71.3246 44 A 4.2 4.2 0 0 0 68.4495 51.2617 A 6.5 6.5 0 1 1 59.5505 51.2617 A 4.2 4.2 0 0 0 56.6754 44 L 37.3246 44 A 0.2 0.2 0 0 1 37.1877 43.6542 A 10.5 10.5 0 1 0 22.8123 43.6542 A 0.2 0.2 0 0 1 22.6754 44 L 22 44 A 6 6 0 0 1 16 38 L 16 22 A 6 6 0 0 1 22 16 Z"/>
+    <path fill="#4A9FD0" d="M 22 48 L 22.6754 48 A 4.2 4.2 0 0 0 25.5505 40.7383 A 6.5 6.5 0 1 1 34.4495 40.7383 A 4.2 4.2 0 0 0 37.3246 48 L 38 48 A 6 6 0 0 1 44 54 L 44 56.6754 A 0.2 0.2 0 0 1 43.6542 56.8123 A 10.5 10.5 0 1 0 43.6542 71.1877 A 0.2 0.2 0 0 1 44 71.3246 L 44 74 A 6 6 0 0 1 38 80 L 22 80 A 6 6 0 0 1 16 74 L 16 54 A 6 6 0 0 1 22 48 Z"/>
+    <path fill="#E9795D" d="M 54 48 L 56.6754 48 A 0.2 0.2 0 0 1 56.8123 48.3458 A 10.5 10.5 0 1 0 71.1877 48.3458 A 0.2 0.2 0 0 1 71.3246 48 L 74 48 A 6 6 0 0 1 80 54 L 80 74 A 6 6 0 0 1 74 80 L 54 80 A 6 6 0 0 1 48 74 L 48 71.3246 A 4.2 4.2 0 0 0 40.7383 68.4495 A 6.5 6.5 0 1 1 40.7383 59.5505 A 4.2 4.2 0 0 0 48 56.6754 L 48 54 A 6 6 0 0 1 54 48 Z"/>
   </g>
   <g
      aria-label="NeoDB"

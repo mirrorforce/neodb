@@ -268,13 +268,24 @@
                  value="{% trans 'merge to another item' %}">
         </form>
       </details>
-      {% if item.is_deletable %}
+      {% if item.is_deletable and not item.journal_exists %}
         <details>
           <summary>{% trans 'Delete' %}</summary>
           <form method="post"
                 action="{% url 'catalog:delete' item.url_path item.uuid %}">
             {% csrf_token %}
             <input class="contrast" type="submit" value="{% trans 'Delete' %}">
+          </form>
+        </details>
+      {% endif %}
+      {% if item.is_deleted and request.user.is_staff %}
+        <details>
+          <summary>{% trans 'Undo delete' %}</summary>
+          <form method="post"
+                action="{% url 'catalog:undelete' item.url_path item.uuid %}">
+            {% csrf_token %}
+            <input class="contrast" type="submit" value="{% trans 'Undo delete' %}">
+            <small>{% trans "Links to external sites and parent item were removed on delete and will not be restored." %}</small>
           </form>
         </details>
       {% endif %}

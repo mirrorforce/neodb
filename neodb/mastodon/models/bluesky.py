@@ -22,12 +22,13 @@ from django.urls import reverse
 from django.utils import timezone
 from loguru import logger
 
-from common.models import jsondata
+from common.models import SiteConfig, jsondata
 from takahe.utils import Takahe
 
 from .bluesky_oauth import (
     DpopRequest,
     OAuthError,
+    OAuthRejectedError,
     fetch_authserver_metadata,
     fetch_pds_authserver,
     generate_dpop_jwk,
@@ -115,7 +116,7 @@ def build_basic_theme() -> dict[str, typing.Any]:
     links back to; bsky.app tints the article card with these colors.
     """
     accent, accent_foreground = _PICO_ACCENT.get(
-        settings.SITE_INFO.get("site_color", "azure"), _PICO_ACCENT["azure"]
+        SiteConfig.system.site_color, _PICO_ACCENT["azure"]
     )
     return {
         "$type": THEME_BASIC_NSID,
@@ -275,9 +276,11 @@ class BlueskyAccount(SocialAccount):
     _oauth_cache: dict | None = None
 
     def get_reauthorize_url(self) -> str:
-        url = reverse("users:login") + "?method=bluesky"
+        # a GET starts the authorization flow for the logged-in owner right
+        # away; a logged-out visitor is sent on to the prefilled login form
+        url = reverse("mastodon:bluesky_login")
         if self.handle:
-            url += "&username=" + quote(self.handle)
+            url += "?username=" + quote(self.handle)
         return url
 
     def _get_oauth(self) -> dict:
@@ -310,7 +313,7 @@ class BlueskyAccount(SocialAccount):
     def get_access_token(self, force_refresh: bool = False) -> str:
         session = self._get_oauth()
         if not session.get("access_token"):
-            raise OAuthError("no OAuth session for this account")
+            raise OAuthRejectedError("no OAuth session for this account")
         if (
             force_refresh
             or int(session.get("expires_at") or 0) < time.time() + _TOKEN_EXPIRY_MARGIN
@@ -347,7 +350,9 @@ class BlueskyAccount(SocialAccount):
             ):
                 return  # already refreshed by another worker
             if not session.get("refresh_token"):
-                raise OAuthError("OAuth session expired, re-authorization needed")
+                raise OAuthRejectedError(
+                    "OAuth session expired, re-authorization needed"
+                )
             tokens, nonce = refresh_token_request(
                 session["token_endpoint"],
                 session["issuer"],

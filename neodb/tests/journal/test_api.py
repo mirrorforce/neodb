@@ -35,139 +35,6 @@ CACHE_SETTINGS = {
 }
 
 
-def _community_token(user, name):
-    app = Takahe.get_or_create_app(
-        name,
-        "https://example.org",
-        "https://example.org/callback",
-        owner_pk=user.identity.pk,
-    )
-    return Takahe.refresh_token(app, user.identity.pk, user.pk)
-
-
-def _post_community_share(token, piece):
-    return Client().post(
-        f"/api/community/share/{piece.uuid}",
-        data=json.dumps(
-            {
-                "operation_key": "community-share-test",
-                "visibility": "public",
-            }
-        ),
-        content_type="application/json",
-        HTTP_AUTHORIZATION=f"Bearer {token}",
-    )
-
-
-@pytest.mark.django_db(databases="__all__")
-def test_community_share_public_review_uses_concrete_lookup():
-    user = User.register(email="share-review@example.com", username="sharereview")
-    item = Edition.objects.create(title="Community Share Review")
-    review = Review(
-        owner=user.identity,
-        item=item,
-        title="Public review",
-        body="Public review body",
-        visibility=0,
-    )
-    review.save(post_when_save=False, index_when_save=False)
-    token = _community_token(user, "Community Share Review API")
-
-    with (
-        patch(
-            "journal.apis.community.share_piece", return_value=object()
-        ) as share_piece,
-        patch(
-            "journal.apis.community.publication_result",
-            return_value={"publication_boundary": "reached"},
-        ),
-    ):
-        response = _post_community_share(token, review)
-
-    assert response.status_code == 201
-    assert response.json() == {"publication_boundary": "reached"}
-    assert share_piece.call_args.args[0].pk == user.pk
-    assert share_piece.call_args.args[0].identity.pk == user.identity.pk
-    assert share_piece.call_args.args[1].__class__ is Review
-    assert share_piece.call_args.args[1].pk == review.pk
-
-
-@pytest.mark.django_db(databases="__all__")
-def test_community_share_public_note_uses_concrete_lookup():
-    user = User.register(email="share-note@example.com", username="sharenote")
-    item = Edition.objects.create(title="Community Share Note")
-    note = Note(
-        owner=user.identity,
-        item=item,
-        title="Public note",
-        content="Public note body",
-        visibility=0,
-    )
-    note.save(post_when_save=False, index_when_save=False)
-    token = _community_token(user, "Community Share Note API")
-
-    with (
-        patch(
-            "journal.apis.community.share_piece", return_value=object()
-        ) as share_piece,
-        patch(
-            "journal.apis.community.publication_result",
-            return_value={"publication_boundary": "reached"},
-        ),
-    ):
-        response = _post_community_share(token, note)
-
-    assert response.status_code == 201
-    assert response.json() == {"publication_boundary": "reached"}
-    assert share_piece.call_args.args[0].pk == user.pk
-    assert share_piece.call_args.args[0].identity.pk == user.identity.pk
-    assert share_piece.call_args.args[1].__class__ is Note
-    assert share_piece.call_args.args[1].pk == note.pk
-
-
-@pytest.mark.django_db(databases="__all__")
-def test_community_share_private_review_uses_existing_guard():
-    user = User.register(email="share-private@example.com", username="shareprivate")
-    item = Edition.objects.create(title="Community Share Private")
-    review = Review(
-        owner=user.identity,
-        item=item,
-        title="Private review",
-        body="Private review body",
-        visibility=2,
-    )
-    review.save(post_when_save=False, index_when_save=False)
-    token = _community_token(user, "Community Share Private API")
-
-    response = _post_community_share(token, review)
-
-    assert response.status_code == 403
-    assert response.json() == {"message": "only PUBLIC Product content may be shared"}
-
-
-@pytest.mark.django_db(databases="__all__")
-def test_community_share_other_owner_is_not_disclosed():
-    viewer = User.register(email="share-viewer@example.com", username="shareviewer")
-    owner = User.register(email="share-owner@example.com", username="shareowner")
-    item = Edition.objects.create(title="Community Share Other Owner")
-    review = Review(
-        owner=owner.identity,
-        item=item,
-        title="Owner review",
-        body="Owner review body",
-        visibility=0,
-    )
-    review.save(post_when_save=False, index_when_save=False)
-    token = _community_token(viewer, "Community Share Other Owner API")
-
-    with patch("journal.apis.community.share_piece") as share_piece:
-        response = _post_community_share(token, review)
-
-    assert response.status_code == 404
-    assert response.json() == {"message": "Piece not found"}
-    share_piece.assert_not_called()
-
-
 @pytest.mark.django_db(databases="__all__")
 @override_settings(CACHES=CACHE_SETTINGS)
 def test_calendar_api_returns_calendar_data():
@@ -422,15 +289,15 @@ def test_user_collections_api_visibility():
     payload = get_collections(stranger)
     assert {c["uuid"] for c in payload["data"]} == {public.uuid}
 
-    payload = get_collections()
-    assert {c["uuid"] for c in payload["data"]} == {public.uuid}
+    # a token is required, like the rest of the /user/{handle} family
+    response = Client().get(f"/api/user/{owner.username}/collection/")
+    assert response.status_code == 401
 
-    owner.identity.anonymous_viewable = False
-    owner.identity.save(update_fields=["anonymous_viewable"])
-    payload = get_collections()
-    assert payload["count"] == 0
-
-    response = Client().get("/api/user/nosuchuser/collection/")
+    token = Takahe.refresh_token(app, stranger.identity.pk, stranger.pk)
+    response = Client().get(
+        "/api/user/nosuchuser/collection/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert response.status_code == 404
 
 
@@ -511,15 +378,15 @@ def test_user_liked_collections_api():
         private.uuid,
     }
 
-    payload = get_liked()
-    assert {c["uuid"] for c in payload["data"]} == {public.uuid}
+    # a token is required, like the rest of the /user/{handle} family
+    response = Client().get(f"/api/user/{liker.username}/collection/liked/")
+    assert response.status_code == 401
 
-    liker.identity.anonymous_viewable = False
-    liker.identity.save(update_fields=["anonymous_viewable"])
-    payload = get_liked()
-    assert payload["count"] == 0
-
-    response = Client().get("/api/user/nosuchuser/collection/liked/")
+    token = Takahe.refresh_token(app, stranger.identity.pk, stranger.pk)
+    response = Client().get(
+        "/api/user/nosuchuser/collection/liked/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
     assert response.status_code == 404
 
 
@@ -1495,6 +1362,8 @@ def test_write_apis_on_merged_item_redirect_with_307():
             "/api/me/note/item/{}/",
             {"title": "Title", "content": "Content", "visibility": 0},
         ),
+        ("delete", "/api/me/shelf/item/{}", None),
+        ("delete", "/api/me/review/item/{}", None),
     ]
     for method, path, payload in cases:
         url = path.format(merged_item.uuid)
@@ -1554,6 +1423,11 @@ def test_write_apis_on_deleted_item_return_404():
         HTTP_AUTHORIZATION=authorization,
     )
     assert response.status_code == 404
+
+    for path in ("/api/me/shelf/item/{}", "/api/me/review/item/{}"):
+        url = path.format(item.uuid)
+        response = client.delete(url, HTTP_AUTHORIZATION=authorization)
+        assert response.status_code == 404, url
 
 
 @pytest.mark.django_db(databases="__all__")
@@ -2443,3 +2317,246 @@ def test_featured_collection_hidden_after_owner_restricts():
     )
     assert response.status_code == 200
     assert response.json() == []
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_content_schemas_share_identity_and_body_field_names():
+    """B5/B6: one name for the body text, and an addressable id everywhere."""
+    user = User.register(email="shapes@example.com", username="shapesuser")
+    item = Edition.objects.create(title="Shapes Book")
+
+    app = Takahe.get_or_create_app(
+        "Schema Shape Tests",
+        "https://example.org",
+        "https://example.org/callback",
+        owner_pk=user.identity.pk,
+    )
+    token = Takahe.refresh_token(app, user.identity.pk, user.pk)
+    authorization = f"Bearer {token}"
+    client = Client()
+
+    # the current name is accepted on input
+    response = client.post(
+        f"/api/me/review/item/{item.uuid}",
+        data=json.dumps({"title": "T", "content": "Review Content", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+
+    review = client.get(
+        f"/api/me/review/item/{item.uuid}", HTTP_AUTHORIZATION=authorization
+    ).json()
+    assert review["content"] == review["body"] == "Review Content"
+    # the uuid the dedicated GET route needs, no longer only parseable out of api_url
+    assert review["api_url"] == f"/api/review/{review['uuid']}"
+    assert review["id"].endswith(review["api_url"].replace("/api", ""))
+    assert review["owner"]["username"] == "shapesuser"
+
+    response = client.get(f"/api/review/{review['uuid']}")
+    assert response.status_code == 200
+
+    # the deprecated name still is too
+    response = client.post(
+        "/api/me/article/",
+        data=json.dumps({"title": "A", "body": "Article Body", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    article = response.json()
+    assert article["content"] == article["body"] == "Article Body"
+    assert article["owner"]["username"] == "shapesuser"
+    assert article["id"].endswith(article["url"])
+
+    response = client.post(
+        "/api/me/collection/",
+        data=json.dumps({"title": "C", "brief": "Collection Brief", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    collection = response.json()
+    assert collection["description"] == collection["brief"] == "Collection Brief"
+    assert collection["id"].endswith(collection["url"])
+
+    response = client.post(
+        f"/api/me/note/item/{item.uuid}/",
+        data=json.dumps({"title": "N", "content": "Note Content", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    note = response.json()
+    assert note["api_url"] == f"/api/me/note/{note['uuid']}"
+    assert note["owner"]["username"] == "shapesuser"
+
+    response = client.post(
+        f"/api/me/shelf/item/{item.uuid}",
+        data=json.dumps({"shelf_type": "complete", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    mark = client.get(
+        f"/api/me/shelf/item/{item.uuid}", HTTP_AUTHORIZATION=authorization
+    ).json()
+    assert mark["owner"]["username"] == "shapesuser"
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_featured_collections_paginate_only_when_asked():
+    """B2: the bare list stays the default so existing clients keep working."""
+    user = User.register(email="featshape@example.com", username="featshapeuser")
+    with (
+        patch("journal.models.collection.Collection.sync_to_timeline"),
+        patch("journal.models.collection.Collection.update_index"),
+    ):
+        collection = Collection.objects.create(
+            owner=user.identity, title="Featured", brief="", visibility=0
+        )
+
+    app = Takahe.get_or_create_app(
+        "Featured Shape Tests",
+        "https://example.org",
+        "https://example.org/callback",
+        owner_pk=user.identity.pk,
+    )
+    token = Takahe.refresh_token(app, user.identity.pk, user.pk)
+    authorization = f"Bearer {token}"
+    client = Client()
+    client.post(
+        f"/api/me/collection/featured/{collection.uuid}",
+        HTTP_AUTHORIZATION=authorization,
+    )
+
+    response = client.get(
+        "/api/me/collection/featured/", HTTP_AUTHORIZATION=authorization
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list)
+    assert [c["uuid"] for c in payload] == [collection.uuid]
+
+    response = client.get(
+        "/api/me/collection/featured/?page=1", HTTP_AUTHORIZATION=authorization
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["pages"] == 1
+    assert [c["uuid"] for c in payload["data"]] == [collection.uuid]
+
+    response = client.get(
+        "/api/me/collection/featured/?page=9", HTTP_AUTHORIZATION=authorization
+    )
+    assert response.json() == {"data": [], "pages": 1, "count": 1}
+
+    response = client.get(
+        "/api/me/collection/featured/?page=0", HTTP_AUTHORIZATION=authorization
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_collection_item_write_responses_agree():
+    """B15: add and update both answer with a Result."""
+    user = User.register(email="citem@example.com", username="citemuser")
+    item = Edition.objects.create(title="Collection Item Book")
+    with (
+        patch("journal.models.collection.Collection.sync_to_timeline"),
+        patch("journal.models.collection.Collection.update_index"),
+    ):
+        collection = Collection.objects.create(
+            owner=user.identity, title="Items", brief="", visibility=0
+        )
+
+    app = Takahe.get_or_create_app(
+        "Collection Item Tests",
+        "https://example.org",
+        "https://example.org/callback",
+        owner_pk=user.identity.pk,
+    )
+    token = Takahe.refresh_token(app, user.identity.pk, user.pk)
+    authorization = f"Bearer {token}"
+    client = Client()
+
+    response = client.post(
+        f"/api/me/collection/{collection.uuid}/item/",
+        data=json.dumps({"item_uuid": item.uuid, "note": "first"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    assert response.json()["message"] == "OK"
+
+    response = client.put(
+        f"/api/me/collection/{collection.uuid}/item/{item.uuid}",
+        data=json.dumps({"note": "second"}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=authorization,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["message"] == "OK"
+    # the pre-Result body is still there for older clients
+    assert payload["note"] == "second"
+    assert payload["item"]["uuid"] == item.uuid
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_timeline_link_allows_anonymous():
+    """C5: it declared required auth while every /catalog/ neighbour is open."""
+    response = Client().get(
+        "/api/v1/timelines/link?url=https://example.org/nothing-here"
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_user_profile_is_public_while_its_subroutes_are_not():
+    """D1: the profile is readable without a token, everything under it is not."""
+    user = User.register(email="pubprof@example.com", username="pubprofuser")
+    app = Takahe.get_or_create_app(
+        "Profile Auth Tests",
+        "https://example.org",
+        "https://example.org/callback",
+        owner_pk=user.identity.pk,
+    )
+    token = Takahe.refresh_token(app, user.identity.pk, user.pk)
+    client = Client()
+
+    response = client.get(f"/api/user/{user.username}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["username"] == "pubprofuser"
+    assert payload["url"] == "/users/pubprofuser/"
+
+    # a token still works and still gets the blocking checks
+    response = client.get(
+        f"/api/user/{user.username}", HTTP_AUTHORIZATION=f"Bearer {token}"
+    )
+    assert response.status_code == 200
+    assert response.json()["username"] == "pubprofuser"
+
+    assert client.get("/api/user/nosuchuser").status_code == 404
+
+    # every subroute of the same handle keeps requiring one
+    for path in (
+        "/api/user/{}/calendar",
+        "/api/user/{}/shelf/wishlist",
+        "/api/user/{}/collection/",
+        "/api/user/{}/collection/liked/",
+    ):
+        url = path.format(user.username)
+        assert client.get(url).status_code == 401, url
+
+    # an identity that opted out of anonymous viewing is not served either
+    user.identity.anonymous_viewable = False
+    user.identity.save(update_fields=["anonymous_viewable"])
+    assert client.get(f"/api/user/{user.username}").status_code == 401
+    response = client.get(
+        f"/api/user/{user.username}", HTTP_AUTHORIZATION=f"Bearer {token}"
+    )
+    assert response.status_code == 200

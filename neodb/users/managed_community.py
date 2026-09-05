@@ -1,95 +1,83 @@
-"""Product-owned bootstrap and lifecycle boundary for the Community edge."""
+"""Product-owned account projection and Pixelfed Account Edge boundary."""
 
-import logging
+from __future__ import annotations
+
 import re
-import secrets
 from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
 from urllib.parse import urlsplit
 
+import django_rq
 import httpx
 from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
+from loguru import logger
 
-from common.durable_work import (
-    DispatchLease,
-    claim_is_current,
-    create_dispatch,
-    enqueue_claimed_dispatch,
-    mark_ambiguous,
-    mark_safe_retry,
-    mark_terminal,
-    reconcile_due_dispatches,
-    recover_expired_claims,
-    schedule_safe_retry_after_observation,
-)
-from common.models import DurableDispatch
-from mastodon.models import (
-    ManagedVinylHubCommunityAccount,
-)
+from .models import ManagedCommunityAccount, ManagedIdentityBinding
 
-from .managed_identity import resolve_managed_identity
-from .models import ManagedCommunityProjection, ManagedIdentityBinding
-from .oneid import VerifiedManagedIdentity
-
-logger = logging.getLogger(__name__)
-
-DISPATCH_PREFIX = "managed-community:"
-_HANDLE_RE = re.compile(r"^vh[a-z0-9]+$")
+_HANDLE_RE = re.compile(r"^vh[a-z0-9]{1,28}$")
 _OWNER_ID_RE = re.compile(r"^[1-9][0-9]{0,38}$")
-MAX_REPLY_LENGTH = 5000
-_PATHS = {
+_EDGE_PATHS = {
     "provision": "/api/v1/internal/vinylhub/account-edge/provision",
     "read": "/api/v1/internal/vinylhub/account-edge/read",
     "renew": "/api/v1/internal/vinylhub/account-edge/credential/renew",
-    "revoke": "/api/v1/internal/vinylhub/account-edge/credential/revoke",
-    "suspend": "/api/v1/internal/vinylhub/account-edge/suspend",
-    "resume": "/api/v1/internal/vinylhub/account-edge/resume",
-    "delete": "/api/v1/internal/vinylhub/account-edge/delete",
-    "delete_status": "/api/v1/internal/vinylhub/account-edge/delete-status",
-    "status_operation_create": "/api/v1/internal/vinylhub/status-operation/create",
-    "status_operation_read": "/api/v1/internal/vinylhub/status-operation/read",
 }
+_KNOWN_LIFECYCLES = {
+    "active",
+    "deleted",
+    "delete_requested",
+    "missing",
+    "repair_required",
+    "suspended",
+}
+_RETRY_DELAY = timedelta(minutes=5)
 
 
 class ManagedCommunityError(RuntimeError):
-    pass
+    """Base class for bounded account-projection failures."""
 
 
 class ManagedCommunityConfigurationError(ManagedCommunityError):
-    pass
+    """The Account Edge or single-issuer configuration is not usable."""
 
 
 class ManagedCommunityAmbiguousError(ManagedCommunityError):
-    pass
+    """The remote operation may have taken effect but is not known."""
 
 
 class ManagedCommunityRejectedError(ManagedCommunityError):
-    pass
+    """The Account Edge rejected the operation without an accepted effect."""
 
 
 class ManagedCommunityProtocolError(ManagedCommunityAmbiguousError):
-    pass
+    """The owner response cannot establish a truthful state."""
 
 
 class ManagedCommunityInvariantError(ManagedCommunityError):
-    pass
+    """Persisted Product identity data is not safe to project."""
 
 
-def _owner_id(value, label: str) -> str:
-    if isinstance(value, bool):
-        raise ManagedCommunityRejectedError(f"{label} is invalid")
-    owner_id = str(value)
-    if not _OWNER_ID_RE.fullmatch(owner_id):
-        raise ManagedCommunityRejectedError(f"{label} is invalid")
-    return owner_id
+@dataclass(frozen=True)
+class AccountEdgeResult:
+    external_subject: str
+    lifecycle: str
+    technical_handle: str | None
+    remote_user_id: str | None
+    remote_profile_id: str | None
+    remote_actor_uri: str | None
+    credential_id: str | None
+    credential_status: str | None
+    credential_scopes: tuple[str, ...]
+    access_token: str | None
 
 
 class PixelfedAccountEdgeClient:
-    """HTTP-only client for the exact Pixelfed #72 owner seam."""
+    """HTTP-only client for the current Pixelfed Account Edge contract."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = str(getattr(settings, "PIXELFED_ACCOUNT_EDGE_URL", "")).rstrip(
             "/"
         )
@@ -109,13 +97,12 @@ class PixelfedAccountEdgeClient:
             raise ManagedCommunityConfigurationError(
                 "Pixelfed Account Edge URL must use HTTPS outside DEBUG"
             )
-        self._managed_api_scheme = parsed.scheme
         self.timeout = float(getattr(settings, "PIXELFED_ACCOUNT_EDGE_TIMEOUT", 10.0))
 
-    def _post(self, operation: str, payload: dict) -> dict:
+    def _post(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             response = httpx.post(
-                self.base_url + _PATHS[operation],
+                self.base_url + _EDGE_PATHS[operation],
                 json=payload,
                 headers={"X-VinylHub-Service-Token": self.service_token},
                 timeout=self.timeout,
@@ -124,7 +111,7 @@ class PixelfedAccountEdgeClient:
             raise ManagedCommunityAmbiguousError(
                 "Pixelfed Account Edge request outcome is unknown"
             ) from exc
-        if response.status_code in {400, 409, 422}:
+        if response.status_code in {400, 401, 403, 404, 409, 422}:
             raise ManagedCommunityRejectedError(
                 f"Pixelfed Account Edge rejected {operation}"
             )
@@ -144,1038 +131,392 @@ class PixelfedAccountEdgeClient:
             )
         return result
 
-    def provision(self, subject: str, handle: str, display_seed: str):
+    def provision(self, external_subject: str, technical_handle: str) -> dict[str, Any]:
         return self._post(
             "provision",
             {
-                "external_subject": subject,
-                "technical_handle": handle,
-                "display_seed": display_seed or None,
+                "external_subject": external_subject,
+                "technical_handle": technical_handle,
+                "display_seed": None,
             },
         )
 
-    def read(self, subject: str, repair: bool = True):
-        return self._post("read", {"external_subject": subject, "repair": repair})
-
-    def _subject(self, operation: str, subject: str):
-        return self._post(operation, {"external_subject": subject})
-
-    def renew(self, subject: str):
-        return self._subject("renew", subject)
-
-    def revoke(self, subject: str):
-        return self._subject("revoke", subject)
-
-    def suspend(self, subject: str):
-        return self._subject("suspend", subject)
-
-    def resume(self, subject: str):
-        return self._subject("resume", subject)
-
-    def delete(self, subject: str):
-        return self._subject("delete", subject)
-
-    def delete_status(self, subject: str):
-        return self._subject("delete_status", subject)
-
-    def status_operation_create(
-        self, subject: str, operation_key: str, intent: dict
-    ) -> dict:
-        """Create through Pixelfed's confidential, stable-key owner seam."""
+    def read(self, external_subject: str) -> dict[str, Any]:
         return self._post(
-            "status_operation_create",
-            {
-                "external_subject": subject,
-                "operation_key": operation_key,
-                **intent,
-            },
+            "read",
+            {"external_subject": external_subject, "repair": True},
         )
 
-    def status_operation_read(
-        self, subject: str, operation_key: str, repair: bool = True
-    ) -> dict:
-        """Read/repair a possibly ambiguous owner operation by the same key."""
-        return self._post(
-            "status_operation_read",
-            {
-                "external_subject": subject,
-                "operation_key": operation_key,
-                "repair": repair,
-            },
-        )
-
-    @staticmethod
-    def _decode_json(response, operation: str) -> dict:
-        if response.status_code in {400, 401, 403, 404, 409, 422}:
-            raise ManagedCommunityRejectedError(
-                f"Pixelfed {operation} request rejected"
-            )
-        if response.status_code < 200 or response.status_code >= 300:
-            raise ManagedCommunityAmbiguousError(
-                f"Pixelfed {operation} request is ambiguous"
-            )
-        try:
-            result = response.json()
-        except (ValueError, TypeError) as exc:
-            raise ManagedCommunityProtocolError(
-                f"Pixelfed {operation} returned invalid JSON"
-            ) from exc
-        if not isinstance(result, dict):
-            raise ManagedCommunityProtocolError(
-                f"Pixelfed {operation} returned a non-object"
-            )
-        return result
-
-    def _managed_api_url(self, account, path: str) -> str:
-        return f"{self._managed_api_scheme}://{account._api_domain}{path}"
-
-    def _managed_request(self, method: str, account, path: str, **kwargs):
-        headers = kwargs.pop("headers", {})
-        headers.update(
-            {
-                "User-Agent": settings.NEODB_USER_AGENT,
-                "Authorization": f"Bearer {account.access_token}",
-            }
-        )
-        kwargs.setdefault("timeout", self.timeout)
-        try:
-            return httpx.request(
-                method,
-                self._managed_api_url(account, path),
-                headers=headers,
-                **kwargs,
-            )
-        except (httpx.HTTPError, OSError) as exc:
-            raise ManagedCommunityAmbiguousError(
-                "Pixelfed managed-account request outcome is unknown"
-            ) from exc
-
-    def upload_media(self, account, file, filename: str, content_type: str | None):
-        """Upload media through the ordinary managed-account API."""
-        response = self._managed_request(
-            "POST",
-            account,
-            "/api/v1/media",
-            files={
-                "file": (filename, file, content_type or "application/octet-stream")
-            },
-        )
-        if response.status_code in {400, 401, 403, 404, 409, 422}:
-            raise ManagedCommunityRejectedError("Pixelfed media upload rejected")
-        if response.status_code < 200 or response.status_code >= 300:
-            raise ManagedCommunityAmbiguousError("Pixelfed media upload is ambiguous")
-        try:
-            result = response.json()
-        except (ValueError, TypeError) as exc:
-            raise ManagedCommunityProtocolError(
-                "Pixelfed media upload returned invalid JSON"
-            ) from exc
-        media_id = result.get("id") if isinstance(result, dict) else None
-        if not media_id:
-            raise ManagedCommunityProtocolError(
-                "Pixelfed media upload returned no media id"
-            )
-        try:
-            media_id = int(media_id)
-        except (TypeError, ValueError) as exc:
-            raise ManagedCommunityProtocolError(
-                "Pixelfed media upload returned an invalid media id"
-            ) from exc
-        if media_id < 1:
-            raise ManagedCommunityProtocolError(
-                "Pixelfed media upload returned an invalid media id"
-            )
-        return media_id
-
-    def read_status(self, account, status_id: str):
-        """Read current owner Status existence; callers interpret 404 only."""
-        status_id = _owner_id(status_id, "status_id")
-        return self._managed_request("GET", account, f"/api/v1/statuses/{status_id}")
-
-    def follow_account(self, account, target_account_id: str) -> dict:
-        target_account_id = _owner_id(target_account_id, "account_id")
-        response = self._managed_request(
-            "POST", account, f"/api/v1/accounts/{target_account_id}/follow"
-        )
-        return self._decode_json(response, "account follow")
-
-    def unfollow_account(self, account, target_account_id: str) -> dict:
-        target_account_id = _owner_id(target_account_id, "account_id")
-        response = self._managed_request(
-            "POST", account, f"/api/v1/accounts/{target_account_id}/unfollow"
-        )
-        return self._decode_json(response, "account unfollow")
-
-    def favourite_status(self, account, status_id: str) -> dict:
-        status_id = _owner_id(status_id, "status_id")
-        response = self._managed_request(
-            "POST", account, f"/api/v1/statuses/{status_id}/favourite"
-        )
-        return self._decode_json(response, "status favourite")
-
-    def unfavourite_status(self, account, status_id: str) -> dict:
-        status_id = _owner_id(status_id, "status_id")
-        response = self._managed_request(
-            "POST", account, f"/api/v1/statuses/{status_id}/unfavourite"
-        )
-        return self._decode_json(response, "status unfavourite")
-
-    def read_status_context(self, account, status_id: str) -> dict:
-        status_id = _owner_id(status_id, "status_id")
-        response = self._managed_request(
-            "GET", account, f"/api/v1/statuses/{status_id}/context"
-        )
-        result = self._decode_json(response, "status context")
-        if not isinstance(result.get("ancestors"), list) or not isinstance(
-            result.get("descendants"), list
-        ):
-            raise ManagedCommunityProtocolError(
-                "Pixelfed status context returned invalid grouping"
-            )
-        if any(
-            not isinstance(status, dict)
-            for status in [*result["ancestors"], *result["descendants"]]
-        ):
-            raise ManagedCommunityProtocolError(
-                "Pixelfed status context returned invalid statuses"
-            )
-        return result
-
-    def reply_status(self, account, parent_status_id: str, text: str) -> dict:
-        parent_status_id = _owner_id(parent_status_id, "parent_status_id")
-        if not isinstance(text, str) or not text.strip():
-            raise ManagedCommunityRejectedError("reply text is required")
-        if len(text) > MAX_REPLY_LENGTH:
-            raise ManagedCommunityRejectedError("reply text is too long")
-        response = self._managed_request(
-            "POST",
-            account,
-            "/api/v1/statuses",
-            data={"status": text, "in_reply_to_id": parent_status_id},
-        )
-        return self._decode_json(response, "status reply")
-
-    def read_feed(self, account, limit: int = 20):
-        response = self._managed_request(
-            "GET", account, "/api/v1/timelines/home", params={"limit": limit}
-        )
-        if response.status_code in {400, 401, 403, 404, 409, 422}:
-            raise ManagedCommunityRejectedError("Pixelfed feed request rejected")
-        if response.status_code < 200 or response.status_code >= 300:
-            raise ManagedCommunityAmbiguousError("Pixelfed feed request is ambiguous")
-        try:
-            result = response.json()
-        except (ValueError, TypeError) as exc:
-            raise ManagedCommunityProtocolError(
-                "Pixelfed feed returned invalid JSON"
-            ) from exc
-        if not isinstance(result, list):
-            raise ManagedCommunityProtocolError("Pixelfed feed returned a non-list")
-        return result
+    def renew(self, external_subject: str) -> dict[str, Any]:
+        return self._post("renew", {"external_subject": external_subject})
 
 
-@dataclass(frozen=True)
-class ManagedIdentityResolution:
-    identity: VerifiedManagedIdentity
-    binding: ManagedIdentityBinding
-    user: object
-    projection: ManagedCommunityProjection
+def ensure_managed_community_account(
+    binding: ManagedIdentityBinding,
+) -> ManagedCommunityAccount:
+    """Create the durable responsibility before a Product account proceeds."""
 
-
-def _display_seed(identity: VerifiedManagedIdentity) -> str:
-    for key in ("nickname", "display_name"):
-        value = identity.accepted_source_attributes.get(key)
-        if isinstance(value, str):
-            return value[:255]
-    return ""
-
-
-def _new_handle() -> str:
-    return "vh" + secrets.token_hex(13)
-
-
-def _active_dispatch(projection_id: int) -> DurableDispatch | None:
-    return (
-        DurableDispatch.objects.filter(
-            responsibility_ref=f"{DISPATCH_PREFIX}{projection_id}"
-        )
-        .exclude(state=DurableDispatch.State.RETIRED)
-        .order_by("id")
-        .first()
-    )
-
-
-def _ensure_dispatch(projection: ManagedCommunityProjection) -> DurableDispatch:
-    existing = _active_dispatch(projection.pk)
-    if existing:
-        return existing
-    return create_dispatch(
-        f"{DISPATCH_PREFIX}{projection.pk}", queue="mastodon", max_attempts=20
-    )
-
-
-def _schedule_projection(projection_id: int) -> None:
-    try:
-        reconcile_managed_community_dispatches(limit=1)
-    except Exception:  # the durable row remains the recovery authority
-        logger.exception(
-            "managed Community dispatch scheduling failed",
-            extra={"projection_id": projection_id},
-        )
-
-
-def _resolve(identity: VerifiedManagedIdentity) -> ManagedIdentityResolution:
-    resolved = resolve_managed_identity(identity)
-    if resolved.bootstrap_required or not resolved.binding or not resolved.user:
-        raise ManagedCommunityInvariantError("managed identity is not bound")
-    try:
-        projection = ManagedCommunityProjection.objects.get(binding=resolved.binding)
-    except ManagedCommunityProjection.DoesNotExist as exc:
-        raise ManagedCommunityInvariantError(
-            "managed Community projection is missing"
-        ) from exc
-    except ManagedCommunityProjection.MultipleObjectsReturned as exc:
-        raise ManagedCommunityInvariantError(
-            "multiple managed Community projections exist"
-        ) from exc
-    return ManagedIdentityResolution(
-        identity, resolved.binding, resolved.user, projection
-    )
-
-
-def bootstrap_managed_identity(
-    identity: VerifiedManagedIdentity,
-) -> ManagedIdentityResolution:
-    """Create the local account, binding, projection and dispatch atomically."""
-
-    existing = resolve_managed_identity(identity)
-    if not existing.bootstrap_required:
-        return _ensure_existing(identity, existing.binding, existing.user)
-
-    for _ in range(8):
-        try:
-            with transaction.atomic():
-                binding = (
-                    ManagedIdentityBinding.objects.filter(
-                        issuer=identity.issuer, subject=identity.subject
-                    )
-                    .select_for_update()
-                    .first()
-                )
-                if binding:
-                    user = binding.user
-                else:
-                    handle = _new_handle()
-                    user = get_user_model().register(username=handle)
-                    binding = ManagedIdentityBinding.objects.create(
-                        issuer=identity.issuer, subject=identity.subject, user=user
-                    )
-                projection = ManagedCommunityProjection.objects.filter(
-                    binding=binding
-                ).first()
-                if projection is None:
-                    projection = ManagedCommunityProjection.objects.create(
-                        user=user,
-                        binding=binding,
-                        technical_handle=user.username,
-                        display_seed=_display_seed(identity),
-                        state=ManagedCommunityProjection.State.PENDING,
-                        operation=ManagedCommunityProjection.Operation.PROVISION,
-                    )
-                _ensure_dispatch(projection)
-                projection_id = projection.pk
-            transaction.on_commit(
-                lambda projection_id=projection_id: _schedule_projection(projection_id)
-            )
-            return _resolve(identity)
-        except IntegrityError:
-            winner = resolve_managed_identity(identity)
-            if not winner.bootstrap_required:
-                return _ensure_existing(identity, winner.binding, winner.user)
-    raise ManagedCommunityInvariantError("managed identity bootstrap did not converge")
-
-
-def _ensure_existing(identity, binding, user) -> ManagedIdentityResolution:
     with transaction.atomic():
-        projection = (
-            ManagedCommunityProjection.objects.select_for_update()
-            .filter(binding=binding)
-            .first()
+        locked_binding = (
+            ManagedIdentityBinding.objects.select_for_update()
+            .select_related("user")
+            .get(pk=binding.pk)
         )
-        if projection is None:
-            projection = ManagedCommunityProjection.objects.create(
-                user=user,
-                binding=binding,
-                technical_handle=user.username,
-                display_seed=_display_seed(identity),
-                state=ManagedCommunityProjection.State.PENDING,
-                operation=ManagedCommunityProjection.Operation.PROVISION,
+        account, _ = ManagedCommunityAccount.objects.get_or_create(
+            binding=locked_binding,
+            defaults={"technical_handle": locked_binding.user.username},
+        )
+        due = (
+            account.next_attempt_at is None or account.next_attempt_at <= timezone.now()
+        )
+        should_enqueue = due and (
+            account.state
+            in {
+                ManagedCommunityAccount.State.PENDING,
+                ManagedCommunityAccount.State.UNKNOWN,
+            }
+            or (
+                account.state == ManagedCommunityAccount.State.ACTIVE
+                and not account.access_token
             )
-            _ensure_dispatch(projection)
-        elif projection.state == ManagedCommunityProjection.State.UNKNOWN:
-            projection.operation = ManagedCommunityProjection.Operation.READ
-            projection.save(update_fields=["operation", "updated_at"])
-            _ensure_dispatch(projection)
-        elif projection.state == ManagedCommunityProjection.State.PENDING:
-            _ensure_dispatch(projection)
-        projection_id = projection.pk
-    transaction.on_commit(lambda: _schedule_projection(projection_id))
-    return _resolve(identity)
-
-
-def _remote_subject(projection: ManagedCommunityProjection) -> str:
-    return projection.binding.subject
-
-
-def _set_error(projection, category: str, error: Exception) -> None:
-    projection.last_error_category = category[:40]
-    projection.last_error_text = str(error)[:500]
-    projection.last_error_at = timezone.now()
-
-
-def _managed_account(projection):
-    accounts = list(
-        ManagedVinylHubCommunityAccount.objects.filter(user_id=projection.user_id)
-    )
-    if len(accounts) > 1:
-        raise ManagedCommunityInvariantError(
-            "multiple managed Community accounts exist"
         )
-    return accounts[0] if accounts else None
-
-
-def _credential_from_result(result: dict) -> str:
-    credential = result.get("credential")
-    token = credential.get("access_token") if isinstance(credential, dict) else None
-    scopes = credential.get("scopes") if isinstance(credential, dict) else None
-    expected_scopes = {"read", "write", "follow"}
-    if not isinstance(token, str) or not token:
-        raise ManagedCommunityProtocolError("owner returned no credential secret")
-    if (
-        not isinstance(scopes, list)
-        or not all(isinstance(scope, str) for scope in scopes)
-        or set(scopes) != expected_scopes
-    ):
-        raise ManagedCommunityProtocolError(
-            "owner returned an invalid managed Community credential scope"
+        account_id = account.pk
+    if should_enqueue:
+        transaction.on_commit(
+            lambda account_id=account_id: _enqueue_managed_community_account(account_id)
         )
-    if any(isinstance(scope, str) and scope.startswith("admin:") for scope in scopes):
-        raise ManagedCommunityProtocolError(
-            "owner returned an administrative managed Community credential"
-        )
-    return token
+    return account
 
 
-def _clear_managed_credential(projection) -> None:
-    account = _managed_account(projection)
-    if not account:
-        return
-    account.access_token = ""
-    account.refresh_token = ""
-    account.save(update_fields=["access_data", "modified"])
+def _enqueue_managed_community_account(account_id: int) -> None:
+    try:
+        django_rq.get_queue("mastodon").enqueue(
+            process_managed_community_account, account_id
+        )
+    except Exception:  # noqa: BLE001
+        # The durable row remains the recovery authority when transport is down.
+        logger.exception(
+            "managed Community account enqueue failed",
+            account_id=account_id,
+        )
 
 
-def _store_provision_result(projection, result: dict) -> bool:
-    if result.get("lifecycle") != "active" or not result.get("projection_exists"):
-        raise ManagedCommunityProtocolError(
-            "provision did not return an active projection"
-        )
-    token = _credential_from_result(result)
-    remote_user_id = result.get("user_id")
-    remote_profile_id = result.get("profile_id")
-    if remote_user_id is None or str(remote_user_id) == "":
-        raise ManagedCommunityProtocolError(
-            "provision returned no remote user identity"
-        )
-    if remote_profile_id is None or str(remote_profile_id) == "":
-        raise ManagedCommunityProtocolError(
-            "provision returned no remote profile identity"
-        )
-    remote_user_id = str(remote_user_id)
-    remote_profile_id = str(remote_profile_id)
-    account = _managed_account(projection)
-    domain = urlsplit(PixelfedAccountEdgeClient().base_url).netloc
-    handle = str(result.get("technical_handle") or projection.technical_handle)
-    if "@" not in handle:
-        handle = f"{handle}@{domain}"
+def process_managed_community_account(account_id: int) -> None:
+    """Make one bounded provisioning/reconciliation attempt."""
+
+    account = _claim_attempt(account_id)
     if account is None:
-        account = ManagedVinylHubCommunityAccount.objects.create(
-            user_id=projection.user_id,
-            domain=domain,
-            uid=remote_profile_id,
-            handle=handle,
-            account_data={
-                "id": remote_profile_id,
-                "username": handle.split("@", 1)[0],
-                "url": str(result.get("actor_uri") or ""),
-            },
-        )
-        # TypedModel proxy construction accepts only concrete DB fields.
-        # Assign the inherited encrypted virtual field after insertion.
-        account.access_token = token
-        account.refresh_token = ""
-        account.save(update_fields=["access_data"])
-    else:
-        account.access_token = token
-        account.uid = remote_profile_id
-        account.handle = handle
-        account_data = dict(account.account_data or {})
-        account_data["id"] = remote_profile_id
-        account.account_data = account_data
-        account.save(
-            update_fields=[
-                "access_data",
-                "uid",
-                "handle",
-                "account_data",
-                "modified",
+        return
+    try:
+        if account.state == ManagedCommunityAccount.State.UNKNOWN or (
+            account.state == ManagedCommunityAccount.State.ACTIVE
+            and not account.access_token
+        ):
+            _reconcile(account_id)
+        elif account.state == ManagedCommunityAccount.State.PENDING:
+            _provision(account_id)
+    except ManagedCommunityRejectedError as exc:
+        _mark_failure(account_id, "owner_rejected", rejected=True)
+        logger.warning("managed Community account rejected: {}", exc)
+    except ManagedCommunityConfigurationError as exc:
+        _mark_failure(account_id, "configuration")
+        logger.warning("managed Community account configuration unavailable: {}", exc)
+    except ManagedCommunityInvariantError as exc:
+        _mark_failure(account_id, "invariant")
+        logger.error("managed Community account invariant failed: {}", exc)
+    except ManagedCommunityError as exc:
+        _mark_failure(account_id, "ambiguous")
+        logger.warning("managed Community account remains unknown: {}", exc)
+    except Exception:  # noqa: BLE001
+        _mark_failure(account_id, "unexpected")
+        logger.exception("managed Community account attempt failed")
+
+
+def reconcile_managed_community_accounts(limit: int = 100) -> int:
+    """Sweep durable pending/unknown responsibilities for lost enqueues."""
+
+    due = Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=timezone.now())
+    account_ids = list(
+        ManagedCommunityAccount.objects.filter(
+            state__in=[
+                ManagedCommunityAccount.State.PENDING,
+                ManagedCommunityAccount.State.UNKNOWN,
             ]
         )
-    projection.managed_account = account
-    projection.remote_user_id = remote_user_id
-    projection.remote_profile_url = str(result.get("actor_uri") or "")[:2048]
-    projection.state = ManagedCommunityProjection.State.PROVISIONED
-    projection.last_error_category = ""
-    projection.last_error_text = ""
-    projection.last_error_at = None
-    return True
+        .filter(due)
+        .order_by("id")
+        .values_list("id", flat=True)[:limit]
+    )
+    for account_id in account_ids:
+        process_managed_community_account(account_id)
+    return len(account_ids)
 
 
-def _mark_projection_terminal(dispatch_id, lease_token, projection, outcome):
-    projection.save(
-        update_fields=[
-            "managed_account",
+def _claim_attempt(account_id: int) -> ManagedCommunityAccount | None:
+    with transaction.atomic():
+        try:
+            account = ManagedCommunityAccount.objects.select_for_update().get(
+                pk=account_id
+            )
+        except ManagedCommunityAccount.DoesNotExist:
+            return None
+        if account.state == ManagedCommunityAccount.State.REJECTED:
+            return None
+        if account.next_attempt_at and account.next_attempt_at > timezone.now():
+            return None
+        account.last_attempt_at = timezone.now()
+        account.next_attempt_at = timezone.now() + _RETRY_DELAY
+        account.attempt_count += 1
+        account.save(
+            update_fields=[
+                "last_attempt_at",
+                "next_attempt_at",
+                "attempt_count",
+                "updated_at",
+            ]
+        )
+        return account
+
+
+def _load_account(account_id: int) -> ManagedCommunityAccount:
+    try:
+        return ManagedCommunityAccount.objects.select_related("binding__user").get(
+            pk=account_id
+        )
+    except ManagedCommunityAccount.DoesNotExist as exc:
+        raise ManagedCommunityInvariantError("managed account disappeared") from exc
+
+
+def _provision(account_id: int) -> None:
+    account = _load_account(account_id)
+    subject = _remote_subject(account.binding)
+    _validate_handle(account.technical_handle)
+    result = _parse_result(
+        PixelfedAccountEdgeClient().provision(subject, account.technical_handle),
+        subject,
+        account.technical_handle,
+    )
+    if result.lifecycle != "active":
+        raise ManagedCommunityProtocolError(
+            "Account Edge provision did not return active"
+        )
+    if not result.access_token:
+        result = _parse_result(
+            PixelfedAccountEdgeClient().renew(subject),
+            subject,
+            account.technical_handle,
+        )
+        if not result.access_token:
+            raise ManagedCommunityProtocolError(
+                "Account Edge renewal returned no credential"
+            )
+    _store_active(account_id, result)
+
+
+def _reconcile(account_id: int) -> None:
+    account = _load_account(account_id)
+    subject = _remote_subject(account.binding)
+    _validate_handle(account.technical_handle)
+    result = _parse_result(
+        PixelfedAccountEdgeClient().read(subject),
+        subject,
+        account.technical_handle,
+    )
+    if result.lifecycle == "missing":
+        # READ/REPAIR proved the remote mapping is absent, so a new provision is
+        # safe and remains idempotent on the owner side.
+        _provision(account_id)
+        return
+    if result.lifecycle != "active":
+        _mark_failure(account_id, "owner_lifecycle")
+        return
+    if not account.access_token or result.credential_status != "active":
+        result = _parse_result(
+            PixelfedAccountEdgeClient().renew(subject),
+            subject,
+            account.technical_handle,
+        )
+        if not result.access_token:
+            raise ManagedCommunityProtocolError(
+                "Account Edge renewal returned no credential"
+            )
+    _store_active(account_id, result)
+
+
+def _store_active(account_id: int, result: AccountEdgeResult) -> None:
+    if not result.remote_user_id or not result.remote_profile_id:
+        raise ManagedCommunityProtocolError("active result has no remote identifiers")
+    if not result.remote_actor_uri:
+        raise ManagedCommunityProtocolError("active result has no actor URI")
+    with transaction.atomic():
+        account = ManagedCommunityAccount.objects.select_for_update().get(pk=account_id)
+        account.remote_user_id = result.remote_user_id
+        account.remote_profile_id = result.remote_profile_id
+        account.remote_actor_uri = result.remote_actor_uri
+        account.credential_id = result.credential_id or ""
+        account.credential_scopes = list(result.credential_scopes)
+        account.state = ManagedCommunityAccount.State.ACTIVE
+        account.last_error_category = ""
+        account.last_error_at = None
+        account.next_attempt_at = None
+        update_fields = [
             "remote_user_id",
-            "remote_profile_url",
+            "remote_profile_id",
+            "remote_actor_uri",
+            "credential_id",
+            "credential_scopes",
             "state",
             "last_error_category",
-            "last_error_text",
             "last_error_at",
+            "next_attempt_at",
             "updated_at",
         ]
-    )
-    if lease_token == "observation":
-        DurableDispatch.objects.filter(
-            pk=dispatch_id, state=DurableDispatch.State.OBSERVATION
-        ).update(
-            state=DurableDispatch.State.RETIRED,
-            next_attempt_at=None,
-            last_outcome=outcome,
-            updated_at=timezone.now(),
-        )
-    else:
-        mark_terminal(dispatch_id, lease_token, outcome=outcome)
+        if result.access_token:
+            account.access_token = result.access_token
+            update_fields.append("credential_data")
+        account.save(update_fields=update_fields)
 
 
-def _schedule_observation_safe_retry(
-    dispatch_id, projection_id, *, state, operation, reason
-):
+def _mark_failure(account_id: int, category: str, *, rejected: bool = False) -> None:
     with transaction.atomic():
-        projection = ManagedCommunityProjection.objects.select_for_update().get(
-            pk=projection_id
-        )
-        projection.state = state
-        projection.operation = operation
-        projection.save(update_fields=["state", "operation", "updated_at"])
-        schedule_safe_retry_after_observation(dispatch_id, reason=reason)
-
-
-def _complete_native_deletion(user_id: int) -> None:
-    from users.views.account import _complete_native_user_deletion
-
-    _complete_native_user_deletion(get_user_model().objects.get(pk=user_id))
-
-
-def _reprovision_after_resume_observation(
-    dispatch_id, lease_token, projection_id, projection
-):
-    repaired = PixelfedAccountEdgeClient().provision(
-        _remote_subject(projection),
-        projection.technical_handle,
-        projection.display_seed,
-    )
-    with transaction.atomic():
-        projection = ManagedCommunityProjection.objects.select_for_update().get(
-            pk=projection_id
-        )
-        _store_provision_result(projection, repaired)
-        projection.user.is_active = True
-        projection.user.save(update_fields=["is_active"])
-        _mark_projection_terminal(
-            dispatch_id,
-            lease_token,
-            projection,
-            DurableDispatch.Outcome.KNOWN_SUCCESS,
-        )
-
-
-def process_managed_community_dispatch(
-    dispatch_id: int, lease_token: str, projection_id: int
-) -> None:
-    if not claim_is_current(dispatch_id, lease_token):
-        return
-    projection = ManagedCommunityProjection.objects.select_related("binding").get(
-        pk=projection_id
-    )
-    operation = projection.operation
-    subject = _remote_subject(projection)
-    client = PixelfedAccountEdgeClient()
-    try:
-        if operation == ManagedCommunityProjection.Operation.PROVISION:
-            result = client.provision(
-                subject,
-                projection.technical_handle,
-                projection.display_seed,
-            )
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                _store_provision_result(projection, result)
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            return
-        if operation == ManagedCommunityProjection.Operation.READ:
-            _observe_projection(
-                dispatch_id, lease_token, projection_id, client.read(subject)
-            )
-            return
-        if operation == ManagedCommunityProjection.Operation.SUSPEND:
-            client.revoke(subject)
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                _clear_managed_credential(projection)
-            result = client.suspend(subject)
-            if result.get("lifecycle") != "suspended":
-                raise ManagedCommunityProtocolError("suspend did not return suspended")
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                projection.state = ManagedCommunityProjection.State.SUSPENDED
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            return
-        if operation == ManagedCommunityProjection.Operation.RESUME:
-            result = client.resume(subject)
-            if result.get("lifecycle") != "active":
-                raise ManagedCommunityProtocolError("resume did not return active")
-            renewed = client.renew(subject)
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                _store_provision_result(projection, renewed)
-                projection.user.is_active = True
-                projection.user.save(update_fields=["is_active"])
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            return
-        if operation == ManagedCommunityProjection.Operation.DELETE:
-            client.revoke(subject)
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                _clear_managed_credential(projection)
-            result = client.delete(subject)
-            result = client.delete_status(subject)
-            lifecycle = result.get("lifecycle")
-            if lifecycle in {"deleted", "missing"}:
-                with transaction.atomic():
-                    projection = (
-                        ManagedCommunityProjection.objects.select_for_update().get(
-                            pk=projection_id
-                        )
-                    )
-                    projection.state = ManagedCommunityProjection.State.DELETED
-                    _mark_projection_terminal(
-                        dispatch_id,
-                        lease_token,
-                        projection,
-                        DurableDispatch.Outcome.KNOWN_SUCCESS,
-                    )
-                _complete_native_deletion(projection.user_id)
-            else:
-                raise ManagedCommunityAmbiguousError(
-                    "remote deletion remains non-terminal"
-                )
-            return
-        raise ManagedCommunityInvariantError(
-            f"unsupported managed Community operation: {operation}"
-        )
-    except ManagedCommunityRejectedError as exc:
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            if operation == ManagedCommunityProjection.Operation.PROVISION:
-                projection.state = ManagedCommunityProjection.State.REJECTED
-            elif operation == ManagedCommunityProjection.Operation.SUSPEND:
-                projection.state = ManagedCommunityProjection.State.SUSPEND_UNKNOWN
-            elif operation == ManagedCommunityProjection.Operation.DELETE:
-                projection.state = ManagedCommunityProjection.State.DELETE_UNKNOWN
-            else:
-                projection.state = ManagedCommunityProjection.State.UNKNOWN
-            _set_error(projection, "owner_rejected", exc)
-            projection.save(
-                update_fields=[
-                    "state",
-                    "last_error_category",
-                    "last_error_text",
-                    "last_error_at",
-                    "updated_at",
-                ]
-            )
-            if operation in {
-                ManagedCommunityProjection.Operation.SUSPEND,
-                ManagedCommunityProjection.Operation.DELETE,
-            }:
-                mark_ambiguous(
-                    dispatch_id,
-                    lease_token,
-                    error_category="owner_rejected",
-                    error_text=str(exc),
-                )
-            else:
-                mark_terminal(
-                    dispatch_id,
-                    lease_token,
-                    outcome=DurableDispatch.Outcome.OWNER_REJECTED,
-                )
-    except ManagedCommunityError as exc:
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            projection.state = {
-                ManagedCommunityProjection.Operation.SUSPEND: ManagedCommunityProjection.State.SUSPEND_UNKNOWN,
-                ManagedCommunityProjection.Operation.DELETE: ManagedCommunityProjection.State.DELETE_UNKNOWN,
-            }.get(operation, ManagedCommunityProjection.State.UNKNOWN)
-            _set_error(projection, "ambiguous", exc)
-            projection.save(
-                update_fields=[
-                    "state",
-                    "last_error_category",
-                    "last_error_text",
-                    "last_error_at",
-                    "updated_at",
-                ]
-            )
-        mark_ambiguous(dispatch_id, lease_token, error_text=str(exc))
-
-
-def _observe_projection(dispatch_id, lease_token, projection_id, result: dict):
-    lifecycle = result.get("lifecycle")
-    projection = ManagedCommunityProjection.objects.get(pk=projection_id)
-    operation = projection.operation
-    if lifecycle == "missing":
-        if operation == ManagedCommunityProjection.Operation.DELETE:
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                projection.state = ManagedCommunityProjection.State.DELETED
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            _complete_native_deletion(projection.user_id)
-            return
-        if operation == ManagedCommunityProjection.Operation.SUSPEND:
-            with transaction.atomic():
-                projection = ManagedCommunityProjection.objects.select_for_update().get(
-                    pk=projection_id
-                )
-                _clear_managed_credential(projection)
-                projection.state = ManagedCommunityProjection.State.SUSPENDED
-                _mark_projection_terminal(
-                    dispatch_id,
-                    lease_token,
-                    projection,
-                    DurableDispatch.Outcome.KNOWN_SUCCESS,
-                )
-            return
-        if operation == ManagedCommunityProjection.Operation.RESUME:
-            _reprovision_after_resume_observation(
-                dispatch_id, lease_token, projection_id, projection
-            )
-            return
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            projection.state = ManagedCommunityProjection.State.PENDING
-            projection.operation = ManagedCommunityProjection.Operation.PROVISION
-            projection.save(update_fields=["state", "operation", "updated_at"])
-        if lease_token == "observation":
-            schedule_safe_retry_after_observation(
-                dispatch_id, reason="owner proved no Community projection exists"
-            )
-        else:
-            mark_safe_retry(
-                dispatch_id,
-                lease_token,
-                error_category="owner_missing",
-                error_text="Owner proved no Community projection exists.",
-            )
-        return
-    if (
-        lifecycle == "delete_requested"
-        and operation == ManagedCommunityProjection.Operation.DELETE
-    ):
-        return
-    if (
-        lifecycle == "deleted"
-        and operation == ManagedCommunityProjection.Operation.SUSPEND
-    ):
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            _clear_managed_credential(projection)
-            projection.state = ManagedCommunityProjection.State.SUSPENDED
-            _mark_projection_terminal(
-                dispatch_id,
-                lease_token,
-                projection,
-                DurableDispatch.Outcome.KNOWN_SUCCESS,
-            )
-        return
-    if (
-        lifecycle == "deleted"
-        and operation == ManagedCommunityProjection.Operation.RESUME
-    ):
-        _reprovision_after_resume_observation(
-            dispatch_id, lease_token, projection_id, projection
-        )
-        return
-    if (
-        lifecycle == "deleted"
-        and operation == ManagedCommunityProjection.Operation.DELETE
-    ):
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            projection.state = ManagedCommunityProjection.State.DELETED
-            _mark_projection_terminal(
-                dispatch_id,
-                lease_token,
-                projection,
-                DurableDispatch.Outcome.KNOWN_SUCCESS,
-            )
-        _complete_native_deletion(projection.user_id)
-        return
-    if lifecycle == "deleted":
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            projection.state = ManagedCommunityProjection.State.PENDING
-            projection.operation = ManagedCommunityProjection.Operation.PROVISION
-            projection.save(update_fields=["state", "operation", "updated_at"])
-        if lease_token == "observation":
-            schedule_safe_retry_after_observation(
-                dispatch_id,
-                reason="Owner proved the Community projection was deleted.",
-            )
-        else:
-            mark_safe_retry(
-                dispatch_id,
-                lease_token,
-                error_category="owner_deleted",
-                error_text="Owner proved the Community projection was deleted.",
-            )
-        return
-    if lifecycle == "suspended":
-        if operation == ManagedCommunityProjection.Operation.RESUME:
-            _schedule_observation_safe_retry(
-                dispatch_id,
-                projection_id,
-                state=ManagedCommunityProjection.State.SUSPENDED,
-                operation=operation,
-                reason="Owner remains suspended; resume can be retried safely.",
-            )
-            return
-        if operation == ManagedCommunityProjection.Operation.DELETE:
-            _schedule_observation_safe_retry(
-                dispatch_id,
-                projection_id,
-                state=ManagedCommunityProjection.State.DELETE_UNKNOWN,
-                operation=operation,
-                reason="Owner remains suspended; delete can be retried safely.",
-            )
-            return
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            projection.state = ManagedCommunityProjection.State.SUSPENDED
-            _mark_projection_terminal(
-                dispatch_id,
-                lease_token,
-                projection,
-                DurableDispatch.Outcome.KNOWN_SUCCESS,
-            )
-        return
-    if lifecycle == "active":
-        if operation == ManagedCommunityProjection.Operation.SUSPEND:
-            _schedule_observation_safe_retry(
-                dispatch_id,
-                projection_id,
-                state=ManagedCommunityProjection.State.SUSPEND_UNKNOWN,
-                operation=operation,
-                reason="Owner remains active; suspend can be retried safely.",
-            )
-            return
-        if operation == ManagedCommunityProjection.Operation.DELETE:
-            _schedule_observation_safe_retry(
-                dispatch_id,
-                projection_id,
-                state=ManagedCommunityProjection.State.DELETE_UNKNOWN,
-                operation=operation,
-                reason="Owner remains active; delete can be retried safely.",
-            )
-            return
-        renewed = PixelfedAccountEdgeClient().renew(_remote_subject(projection))
-        with transaction.atomic():
-            projection = ManagedCommunityProjection.objects.select_for_update().get(
-                pk=projection_id
-            )
-            _store_provision_result(projection, renewed)
-            if projection.operation == ManagedCommunityProjection.Operation.RESUME:
-                projection.user.is_active = True
-                projection.user.save(update_fields=["is_active"])
-            _mark_projection_terminal(
-                dispatch_id,
-                lease_token,
-                projection,
-                DurableDispatch.Outcome.KNOWN_SUCCESS,
-            )
-        return
-    raise ManagedCommunityAmbiguousError("owner observation did not resolve lifecycle")
-
-
-def _enqueue_managed_community_lease(lease: DispatchLease):
-    projection_id = int(lease.responsibility_ref.removeprefix(DISPATCH_PREFIX))
-    return enqueue_claimed_dispatch(
-        lease, process_managed_community_dispatch, projection_id
-    )
-
-
-def reconcile_managed_community_dispatches(limit: int = 100):
-    recover_expired_claims(limit=limit, responsibility_prefix=DISPATCH_PREFIX)
-    return reconcile_due_dispatches(
-        _enqueue_managed_community_lease,
-        limit=limit,
-        responsibility_prefix=DISPATCH_PREFIX,
-    )
-
-
-def reconcile_managed_community_observations(limit: int = 100) -> int:
-    rows = list(
-        DurableDispatch.objects.filter(
-            state=DurableDispatch.State.OBSERVATION,
-            responsibility_ref__startswith=DISPATCH_PREFIX,
-        ).order_by("id")[:limit]
-    )
-    repaired = 0
-    for dispatch in rows:
         try:
-            projection_id = int(
-                dispatch.responsibility_ref.removeprefix(DISPATCH_PREFIX)
+            account = ManagedCommunityAccount.objects.select_for_update().get(
+                pk=account_id
             )
-            projection = ManagedCommunityProjection.objects.select_related(
-                "binding"
-            ).get(pk=projection_id)
-            client = PixelfedAccountEdgeClient()
-            result = (
-                client.delete_status(_remote_subject(projection))
-                if projection.operation == ManagedCommunityProjection.Operation.DELETE
-                else client.read(_remote_subject(projection), repair=True)
-            )
-            lifecycle = result.get("lifecycle")
-            if lifecycle in {"active", "suspended", "deleted", "missing"}:
-                _observe_projection(dispatch.pk, "observation", projection_id, result)
-            else:
-                continue
-            repaired += 1
-        except ManagedCommunityError:
-            continue
-    return repaired
-
-
-def begin_managed_community_suspend(user) -> bool:
-    projection = ManagedCommunityProjection.objects.filter(user=user).first()
-    if not projection:
-        return False
-    with transaction.atomic():
-        projection = ManagedCommunityProjection.objects.select_for_update().get(
-            pk=projection.pk
+        except ManagedCommunityAccount.DoesNotExist:
+            return
+        account.state = (
+            ManagedCommunityAccount.State.REJECTED
+            if rejected
+            else ManagedCommunityAccount.State.UNKNOWN
         )
-        user.is_active = False
-        # Django's native session backend rejects sessions whose auth hash
-        # changed, so this also invalidates existing Product sessions.
-        user.set_password(secrets.token_urlsafe(32))
-        user.save(update_fields=["is_active", "password"])
-        projection.state = ManagedCommunityProjection.State.SUSPEND_UNKNOWN
-        projection.operation = ManagedCommunityProjection.Operation.SUSPEND
-        projection.save(update_fields=["state", "operation", "updated_at"])
-        _ensure_dispatch(projection)
-        projection_id = projection.pk
-    transaction.on_commit(lambda: _schedule_projection(projection_id))
-    return True
-
-
-def resume_managed_community(user) -> bool:
-    projection = ManagedCommunityProjection.objects.filter(user=user).first()
-    if not projection:
-        return False
-    with transaction.atomic():
-        projection = ManagedCommunityProjection.objects.select_for_update().get(
-            pk=projection.pk
+        account.last_error_category = category[:64]
+        account.last_error_at = timezone.now()
+        account.next_attempt_at = None if rejected else timezone.now() + _RETRY_DELAY
+        account.save(
+            update_fields=[
+                "state",
+                "last_error_category",
+                "last_error_at",
+                "next_attempt_at",
+                "updated_at",
+            ]
         )
-        projection.state = ManagedCommunityProjection.State.UNKNOWN
-        projection.operation = ManagedCommunityProjection.Operation.RESUME
-        projection.save(update_fields=["state", "operation", "updated_at"])
-        _ensure_dispatch(projection)
-        projection_id = projection.pk
-    transaction.on_commit(lambda: _schedule_projection(projection_id))
-    return True
 
 
-def begin_managed_community_deletion(user) -> bool:
-    projection = ManagedCommunityProjection.objects.filter(user=user).first()
-    if not projection or projection.state == ManagedCommunityProjection.State.DELETED:
-        return True
-    with transaction.atomic():
-        projection = ManagedCommunityProjection.objects.select_for_update().get(
-            pk=projection.pk
+def _remote_subject(binding: ManagedIdentityBinding) -> str:
+    configured_issuer = str(getattr(settings, "ONEID_ISSUER", "")).rstrip("/")
+    if not configured_issuer or binding.issuer.rstrip("/") != configured_issuer:
+        raise ManagedCommunityConfigurationError(
+            "Account Edge subject mapping requires the configured single issuer"
         )
-        user.is_active = False
-        user.set_password(secrets.token_urlsafe(32))
-        user.save(update_fields=["is_active", "password"])
-        projection.state = ManagedCommunityProjection.State.DELETING
-        projection.operation = ManagedCommunityProjection.Operation.DELETE
-        projection.save(update_fields=["state", "operation", "updated_at"])
-        _ensure_dispatch(projection)
-        projection_id = projection.pk
-    transaction.on_commit(lambda: _schedule_projection(projection_id))
-    return False
+    if not binding.subject:
+        raise ManagedCommunityInvariantError("managed identity subject is empty")
+    return binding.subject
+
+
+def _validate_handle(handle: str) -> None:
+    if not _HANDLE_RE.fullmatch(handle):
+        raise ManagedCommunityRejectedError(
+            "Product username is not a valid Account Edge technical handle"
+        )
+
+
+def _parse_result(
+    result: dict[str, Any], expected_subject: str, expected_handle: str
+) -> AccountEdgeResult:
+    if result.get("external_subject") != expected_subject:
+        raise ManagedCommunityProtocolError("Account Edge subject mismatch")
+    lifecycle = result.get("lifecycle")
+    if lifecycle not in _KNOWN_LIFECYCLES:
+        raise ManagedCommunityProtocolError("Account Edge lifecycle is invalid")
+    technical_handle = result.get("technical_handle")
+    if technical_handle is not None and not isinstance(technical_handle, str):
+        raise ManagedCommunityProtocolError("Account Edge handle is invalid")
+    if lifecycle == "active":
+        if result.get("projection_exists") is not True:
+            raise ManagedCommunityProtocolError("active result has no projection")
+        if technical_handle != expected_handle:
+            raise ManagedCommunityProtocolError("Account Edge handle mismatch")
+    elif lifecycle == "missing" and result.get("projection_exists") is not False:
+        raise ManagedCommunityProtocolError(
+            "missing result has invalid projection flag"
+        )
+    remote_user_id = _owner_identifier(result.get("user_id"))
+    remote_profile_id = _owner_identifier(result.get("profile_id"))
+    remote_actor_uri = _actor_uri(result.get("actor_uri"))
+    if lifecycle == "active" and (
+        not remote_user_id or not remote_profile_id or not remote_actor_uri
+    ):
+        raise ManagedCommunityProtocolError(
+            "active result has incomplete remote projection"
+        )
+    credential_id, credential_status, scopes, access_token = _credential(
+        result.get("credential")
+    )
+    return AccountEdgeResult(
+        external_subject=expected_subject,
+        lifecycle=lifecycle,
+        technical_handle=technical_handle,
+        remote_user_id=remote_user_id,
+        remote_profile_id=remote_profile_id,
+        remote_actor_uri=remote_actor_uri,
+        credential_id=credential_id,
+        credential_status=credential_status,
+        credential_scopes=scopes,
+        access_token=access_token,
+    )
+
+
+def _owner_identifier(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ManagedCommunityProtocolError("Account Edge identifier is invalid")
+    text = str(value)
+    if not _OWNER_ID_RE.fullmatch(text):
+        raise ManagedCommunityProtocolError("Account Edge identifier is invalid")
+    return text
+
+
+def _actor_uri(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ManagedCommunityProtocolError("Account Edge actor URI is invalid")
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ManagedCommunityProtocolError("Account Edge actor URI is invalid")
+    return value
+
+
+def _credential(
+    value: Any,
+) -> tuple[str | None, str | None, tuple[str, ...], str | None]:
+    if value is None:
+        return None, None, (), None
+    if not isinstance(value, dict):
+        raise ManagedCommunityProtocolError("Account Edge credential is invalid")
+    credential_id = _owner_identifier(value.get("id"))
+    status = value.get("status")
+    if status is not None and status not in {
+        "active",
+        "inactive",
+        "missing",
+        "revoked",
+        "unavailable",
+    }:
+        raise ManagedCommunityProtocolError("Account Edge credential status is invalid")
+    scopes = value.get("scopes", [])
+    if not isinstance(scopes, list) or not all(
+        isinstance(scope, str) for scope in scopes
+    ):
+        raise ManagedCommunityProtocolError(
+            "Account Edge credential scopes are invalid"
+        )
+    access_token = value.get("access_token")
+    if access_token is not None and (
+        not isinstance(access_token, str) or not access_token
+    ):
+        raise ManagedCommunityProtocolError("Account Edge credential is invalid")
+    return credential_id, status, tuple(scopes), access_token

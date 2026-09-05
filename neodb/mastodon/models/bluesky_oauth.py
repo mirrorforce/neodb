@@ -36,6 +36,12 @@ class OAuthError(Exception):
     pass
 
 
+class OAuthRejectedError(OAuthError):
+    """The authorization server refused the credentials presented to it, or
+    there are none left to present. Unlike a transport failure this never
+    recovers on a retry: the user has to authorize again."""
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -119,7 +125,7 @@ def get_redirect_uri() -> str:
 def get_client_metadata() -> dict:
     return {
         "client_id": get_client_id(),
-        "client_name": settings.SITE_INFO["site_name"],
+        "client_name": SiteConfig.system.site_name,
         "client_uri": settings.SITE_INFO["site_url"],
         "redirect_uris": [get_redirect_uri()],
         "grant_types": ["authorization_code", "refresh_token"],
@@ -241,7 +247,10 @@ def _authserver_post(
                 continue
         break
     if r.status_code not in (200, 201):
-        raise OAuthError(f"{url} returned {r.status_code}: {r.text[:200]}")
+        # a 4xx is the server refusing what we sent (an expired refresh token
+        # answers invalid_grant); 5xx is worth retrying with the same session
+        error = OAuthRejectedError if r.status_code < 500 else OAuthError
+        raise error(f"{url} returned {r.status_code}: {r.text[:200]}")
     return r.json(), nonce
 
 

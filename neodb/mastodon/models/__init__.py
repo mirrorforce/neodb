@@ -8,7 +8,6 @@ from .mastodon import (
     detect_server_info,
     verify_client,
 )
-from .managed_community import ManagedVinylHubCommunityAccount
 from .threads import Threads, ThreadsAccount
 
 __all__ = [
@@ -19,7 +18,6 @@ __all__ = [
     "Mastodon",
     "MastodonAccount",
     "MastodonApplication",
-    "ManagedVinylHubCommunityAccount",
     "Platform",
     "SocialAccount",
     "Threads",

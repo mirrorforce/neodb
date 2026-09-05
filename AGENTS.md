@@ -1,25 +1,79 @@
-# VinylHub repository overlay
+# Repository governance
 
-This file adds only durable VinylHub execution rules. NeoDB's native Python, Django, migration, Docker, test, formatting, and release conventions remain authoritative unless a linked task explicitly authorizes a bounded change.
+This file defines the durable repository method. The current program handoff and
+owner Issue define the current work: scope, acceptance criteria, authorized write
+set, and integration order. Do not infer current Product requirements from old
+tasks, closed Issues, historical branches, or source archaeology.
 
-## Authority and scope
+## Authority and execution
 
-- App program Issue/contract -> local owner Issue -> one task branch -> one owner PR -> Controller review -> app integration gate.
-- Fresh-read the current handoff, app contract, owner Issue, root guidance, default branch, and fork/upstream identity before non-trivial work. Volatile scope, SHAs, runtime versions, and acceptance decisions belong to those current sources and the owner PR, not this file.
-- M0/bootstrap work is `REPOSITORY_BEHAVIOR`: repository policy, narrow Skills, evidence, and source/runtime admission only. Fail closed before Product schema/API semantics, identity changes, external integrations, generic frameworks, ownership changes, or production cutover.
+- Fresh-read the current program handoff, owner Issue, repository guidance,
+  default branch, and fork/upstream identity before non-trivial work.
+- The repository default branch is the sole current downstream source authority.
+  Ordinary non-trivial work starts from a fresh exact default-branch HEAD and is
+  delivered through one task branch and one owner PR back to the default branch.
+- A task, integration, candidate, recovery, or experiment branch must not become a
+  second long-lived Product mainline. A non-default source base is permitted only
+  for an explicit current Human-approved recovery/cutover, and that exception must
+  terminate by restoring one authoritative default branch.
+- Upstream identity is tracked separately. A fresh upstream commit/tree may be an
+  admitted baseline or comparison input, but it does not replace the downstream
+  default branch as repository source authority.
+- Repository-owned repeatable methods live under `.agents/skills`. They describe
+  HOW to work; Issues and PRs provide mutable WHAT, WHY, scope, and exact identity.
+  `.codex/` is tool-private/local and has no repository authority unless a future
+  explicit contract says otherwise.
+- The machine-local Executor is the repository-file writer. Keep authority,
+  review, and handoff decisions in the current owner workflow rather than in chat
+  memory or a parallel governance system.
 
-## Repository safety
+## Safety and ownership
 
-- One repository has one writer by default. Codex Sub Agents are prohibited unless the current authority explicitly changes that rule.
-- Do not write non-trivial changes directly to the default branch. Use one task branch, preserve upstream history and branch naming, and deliver one coherent owner PR with semantic commits/merge review.
-- Public fork content must contain no secrets, credentials, private user data, database dumps, private media, or uncontrolled runtime output. Use test-only values and isolated disposable services for validation.
-- Keep evidence reproducible and minimal: exact source/tree identity, changed paths, commands, outcomes, scope/non-changes, and bounded unknowns. Never turn an unavailable check into a pass.
+- One repository has one writer by default. `SUBAGENTS = PROHIBITED` unless the
+  current authority explicitly changes it.
+- Preserve history. Do not write non-trivially to the default branch, rewrite
+  shared history, force-push, or silently reset/rebase/amend shared work.
+- Delete accepted task branches after delivery/terminalization once no current
+  Issue or PR consumes them. Historical evidence remains in commits, PRs, and
+  Issues rather than in permanent parallel source branches.
+- Fail closed on a dirty or unknown checkout, source identity drift, another writer
+  occupying the line, contradictory authority, or a request outside the current
+  authorized write set.
+- Keep public-fork content free of secrets, credentials, private user data,
+  database dumps, private media, and uncontrolled runtime output. Use isolated
+  disposable services and test-only values for validation.
 
-## Upstream and delivery identity
+## Source and architecture
 
-- Treat `upstream/main` as a tracking candidate. Do not silently follow moving upstream or rewrite upstream history.
-- An admitted baseline is an exact reviewed upstream commit and tree recorded in the owner PR. VinylHub delivery/release identity is downstream and must point to its own reviewed commit and, when applicable, immutable tag/image digest; never reuse or retag an upstream release identity.
+- Record the exact default-branch source commit/tree and exact admitted upstream
+  commit/tree before implementation. A downstream delivery has its own reviewed
+  identity and must not reuse an upstream release identity.
+- Preserve upstream-native Django, Takahē, persistence, session, queue, search,
+  and runtime ownership and lifecycle boundaries. Introduce only the minimum
+  accepted owner-lane delta.
+- Never infer Product or architecture semantics from retired downstream code. Fail
+  closed on generic frameworks, duplicate authority, parallel Product models, or
+  unaccepted dependency, persistence, schema, API, migration, or runtime changes.
 
-Use the repository-local Skills at `.agents/skills/<skill>/SKILL.md` for the repeatable HOW: `task-preflight`, `architecture-conformance`, `test-environment`, `acceptance-evidence`, and `delivery-lifecycle`. `.codex/` remains tool-private/local state unless a future owner contract gives it repository meaning. Skills do not grant scope, architecture authority, or acceptance.
+## Evidence and delivery
 
-Runtime-dependent T1/T2 work has a hard prerequisite: `task-preflight` must dispatch `test-environment` before the first runtime-dependent command. That Skill must produce the complete admission record and set `ENVIRONMENT_ADMISSION = PASS`; otherwise the requested tier is `BLOCKED` and no command may be claimed as T1 or T2. `acceptance-evidence` must preserve that admission record and refuse tier promotion without it. T0 static checks do not make a runtime claim. Read current workflow, owner, runner, dependency, and service authority at execution time; do not duplicate volatile service or version matrices in durable guidance.
+- T0 is static evidence: inspection, formatting, lint, type, compile, structural,
+  documentation, and changed-path checks. It does not establish runtime behavior.
+- T1/T2 claims require the current `test-environment` admission before the first
+  runtime-dependent command. A blocked admission is recorded as
+  `BLOCKED`/`NOT_RUN`; required services are not silently substituted.
+- NeoDB's current VinylHub machine-local canonical T1 profile is defined inside
+  `.agents/skills/test-environment/SKILL.md`. It is an explicit proven profile,
+  not something to reconstruct from `compose.yml`, old M0 notes, or previous
+  failure reports. In particular, native Compose search defaults are not
+  automatically the VinylHub owner-T1 search authority.
+- T3 app-composed development is owned and admitted by
+  `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
+  requirements but does not admit T3. A different App T3 service topology must
+  not silently overwrite the NeoDB T1 profile.
+- Preserve exact commands, outcomes, changed paths, non-scope, and bounded unknowns
+  in acceptance evidence. Keep Skills, operations, and implemented behavior in
+  their respective owners.
+- Follow owner Issue -> task branch -> review -> accepted default branch -> branch
+  cleanup -> integration gate. Do not merge or change the default branch unless
+  current authority explicitly authorizes that action.

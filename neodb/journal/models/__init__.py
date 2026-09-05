@@ -7,7 +7,6 @@ from .attachment import (
 )
 from .collection import UNMARKED, Collection, CollectionMember, FeaturedCollection
 from .comment import Comment
-from .cabinet import CollectionItem
 from .common import (
     Content,
     Piece,
@@ -24,7 +23,6 @@ from .common import (
 from .crosspost import CrosspostRetry
 from .like import Like
 from .mark import Mark
-from .managed_community import ManagedCommunityPublication
 from .mixins import UserOwnedObjectMixin
 from .note import Note
 from .rating import Rating
@@ -53,7 +51,6 @@ __all__ = [
     "Attachment",
     "Collection",
     "CollectionMember",
-    "CollectionItem",
     "Content",
     "FeaturedCollection",
     "Comment",
@@ -73,7 +70,6 @@ __all__ = [
     "prefetch_latest_posts",
     "q_piece_visible_to_user",
     "Like",
-    "ManagedCommunityPublication",
     "Mark",
     "Note",
     "Rating",
