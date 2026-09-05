@@ -1,0 +1,4 @@
+# Linux/container entrypoints must use LF even on Windows worktrees.
+*.sh text eol=lf
+/misc/bin/* text eol=lf
+/misc/bin/*.ps1 text eol=crlf
