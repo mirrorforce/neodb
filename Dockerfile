@@ -31,6 +31,15 @@ ENV VIRTUAL_ENV=/neodb-venv
 RUN find /misc/wheels-cache -type f | xargs -n 1 uv pip install --python /neodb-venv/bin/python || echo incompatible wheel ignored
 RUN --mount=type=cache,sharing=locked,target=/root/.cache uv sync --active --no-install-project $(if [ -z "$dev" ]; then echo "--no-dev"; fi)
 
+# Keep the ordinary runtime payload separate from owner-test-only inputs.  The
+# full source remains available to the explicit `owner-tests` target below.
+RUN mkdir -p /runtime-bin \
+ && find /misc/bin -maxdepth 1 -type f ! -name neodb-t1 -exec cp {} /runtime-bin/ \; \
+ && cp -a /neodb /runtime-neodb \
+ && rm -rf /runtime-neodb/pytest.ini /runtime-neodb/tests /runtime-neodb/test_data \
+ && cp -a /takahe /runtime-takahe \
+ && rm -rf /runtime-takahe/tests
+
 # runtime stage
 FROM python:3.14-slim@sha256:cad9a2c871761c413caa6fdd6441c783451e740a48aaeba60ae62a8b53525ef6 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -49,9 +58,8 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt-run apt-get update \
 
 COPY --from=build /etc/neodb_version /etc/neodb_version
 COPY --from=build /etc/neodb_tree /etc/neodb_tree
-COPY --from=build /neodb /neodb
-COPY --from=build /takahe /takahe
-COPY --from=build /docs /docs
+COPY --from=build /runtime-neodb /neodb
+COPY --from=build /runtime-takahe /takahe
 COPY --from=build /neodb-venv /neodb-venv
 
 WORKDIR /neodb
@@ -63,7 +71,7 @@ WORKDIR /takahe
 RUN TAKAHE_DATABASE_SERVER="postgres://x@y/z" TAKAHE_SECRET_KEY="t" TAKAHE_MAIN_DOMAIN="x.y" /neodb-venv/bin/python3 manage.py collectstatic --noinput
 
 WORKDIR /neodb
-COPY misc/bin/* /bin/
+COPY --from=build /runtime-bin/ /bin/
 
 # Kept these path for backwards compatibility
 COPY misc/bin/nginx-start /neodb/misc/bin/
@@ -73,3 +81,19 @@ RUN chown -R app:app /neodb /takahe
 USER app:app
 
 CMD [ "neodb-hello"]
+
+# Explicit owner-test target.  It restores the exact source and test fixtures
+# after the production/runtime target has completed its build steps.
+FROM runtime AS owner-tests
+USER root
+COPY --from=build /neodb /neodb
+COPY --from=build /takahe /takahe
+COPY --from=build /docs/lexicons /docs/lexicons
+COPY --from=build /misc/bin/neodb-t1 /bin/neodb-t1
+RUN chown -R app:app /neodb /takahe /docs \
+ && chown app:app /bin/neodb-t1
+USER app:app
+
+# Keep the default Docker build target production/runtime.  Owner tests must
+# opt in to their target explicitly.
+FROM runtime AS production

@@ -86,21 +86,22 @@ jobs:
         echo "Typesense did not become ready after 30 attempts"
         docker logs "${{ job.services.typesense.id }}" --tail 50 || true
         exit 1
-    - name: Build NeoDB T1 image
+    - name: Build NeoDB owner-test image
       shell: bash
       run: |
         source_sha="$(git rev-parse HEAD)"
         source_tree="$(git rev-parse 'HEAD^{tree}')"
         docker build \
+          --target owner-tests \
           --build-arg dev=1 \
           --build-arg buildver="${source_sha}" \
           --build-arg sourcetree="${source_tree}" \
-          --tag "neodb-t1:${source_sha}" .
-    - name: Run NeoDB T1
+          --tag "neodb-owner-tests:${source_sha}" .
+    - name: Run NeoDB owner tests
       shell: bash
       run: |
         source_sha="$(git rev-parse HEAD)"
-        container_name="neodb-t1-${GITHUB_RUN_ID}"
+        container_name="neodb-owner-tests-${GITHUB_RUN_ID}"
         set +e
         docker run --name "${container_name}" --network host \
           --env NEODB_SECRET_KEY=test \
@@ -110,7 +111,7 @@ jobs:
           --env TAKAHE_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb_takahe \
           --env NEODB_REDIS_URL=redis://127.0.0.1:6379/0 \
           --env NEODB_SEARCH_URL=typesense://testuser:testpass@127.0.0.1:8108/cat \
-          "neodb-t1:${source_sha}" /bin/sh /bin/neodb-t1
+          "neodb-owner-tests:${source_sha}" /bin/sh /bin/neodb-t1
         test_status=$?
         docker cp "${container_name}:/neodb/coverage.xml" neodb/coverage.xml || true
         docker rm "${container_name}" >/dev/null

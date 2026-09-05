@@ -4,5 +4,10 @@ set -eu
 cd /neodb
 PYTHON=/neodb-venv/bin/python
 
+if [ -z "${NEODB_SEARCH_URL:-}" ]; then
+    echo "NEODB_SEARCH_URL must be injected for the NeoDB owner-test run" >&2
+    exit 2
+fi
+
 "$PYTHON" manage.py compilemessages -l zh_Hans
 exec "$PYTHON" -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml

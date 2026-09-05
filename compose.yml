@@ -9,7 +9,9 @@
 
 x-shared:
   neodb-service: &neodb-service
-    build: .
+    build:
+      context: .
+      target: production
     image: ${NEODB_IMAGE:-neodb/neodb:latest}
     environment:
       NEODB_DEBUG:
@@ -160,14 +162,15 @@ services:
       - ${NEODB_DATA:-../data}/typesense:/data
     command: "--data-dir /data --api-key=eggplant"
 
-  neodb-t1:
+  neodb-owner-tests:
     build:
       context: .
+      target: owner-tests
       args:
         dev: "1"
-        buildver: ${NEODB_T1_SOURCE_SHA:-dev-unknown}
-        sourcetree: ${NEODB_T1_SOURCE_TREE:-dev-unknown}
-    image: ${NEODB_T1_IMAGE:-neodb/neodb:t1}
+        buildver: ${NEODB_OWNER_TEST_SOURCE_SHA:-dev-unknown}
+        sourcetree: ${NEODB_OWNER_TEST_SOURCE_TREE:-dev-unknown}
+    image: ${NEODB_OWNER_TEST_IMAGE:-neodb/neodb:owner-tests}
     command: ["/bin/sh", "/bin/neodb-t1"]
     environment:
       NEODB_SECRET_KEY: ${NEODB_SECRET_KEY:-test}
@@ -176,7 +179,9 @@ services:
       NEODB_DB_URL: ${NEODB_DB_URL:-postgres://neodb:aubergine@neodb-db/neodb}
       TAKAHE_DB_URL: ${TAKAHE_DB_URL:-postgres://takahe:aubergine@takahe-db/takahe}
       NEODB_REDIS_URL: ${NEODB_REDIS_URL:-redis://redis:6379/0}
-      NEODB_SEARCH_URL: ${NEODB_SEARCH_URL:-}
+      # The container entrypoint rejects an absent/empty value.  This must be
+      # injected by the machine-local secure-store wrapper for owner tests.
+      NEODB_SEARCH_URL:
       NEODB_VENV: /neodb-venv
       TAKAHE_SECRET_KEY: ${NEODB_SECRET_KEY:-test}
       TAKAHE_MAIN_DOMAIN: ${NEODB_SITE_DOMAIN:-example.org}
@@ -192,7 +197,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    profiles: ["t1"]
+    profiles: ["owner-tests"]
 
   neodb-db:
     image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
