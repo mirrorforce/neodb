@@ -62,9 +62,15 @@ tasks, closed Issues, historical branches, or source archaeology.
 - T1/T2 claims require the current `test-environment` admission before the first
   runtime-dependent command. A blocked admission is recorded as
   `BLOCKED`/`NOT_RUN`; required services are not silently substituted.
+- NeoDB's current VinylHub machine-local canonical T1 profile is defined inside
+  `.agents/skills/test-environment/SKILL.md`. It is an explicit proven profile,
+  not something to reconstruct from `compose.yml`, old M0 notes, or previous
+  failure reports. In particular, native Compose search defaults are not
+  automatically the VinylHub owner-T1 search authority.
 - T3 app-composed development is owned and admitted by
   `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
-  requirements but does not admit T3.
+  requirements but does not admit T3. A different App T3 service topology must
+  not silently overwrite the NeoDB T1 profile.
 - Preserve exact commands, outcomes, changed paths, non-scope, and bounded unknowns
   in acceptance evidence. Keep Skills, operations, and implemented behavior in
   their respective owners.
