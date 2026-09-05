@@ -9,7 +9,6 @@ from django.utils.functional import lazy
 from loguru import logger
 from ninja import Field, NinjaAPI, Schema, Status
 from ninja.errors import HttpError
-from pydantic import AliasChoices
 from ninja.pagination import PageNumberPagination as NinjaPageNumberPagination
 from ninja.security import HttpBearer
 from pydantic import AliasChoices
