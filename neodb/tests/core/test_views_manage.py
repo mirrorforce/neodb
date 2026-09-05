@@ -684,6 +684,10 @@ class TestEnvironmentPage:
         self, client: Any, monkeypatch: pytest.MonkeyPatch, settings: Any
     ) -> None:
         settings.SECRET_KEY = "top-secret-key-value"
+        settings.ONEID_ISSUER = "https://oneid.example/issuer"
+        settings.ONEID_CLIENT_SECRET = "oneid-client-secret"
+        settings.PIXELFED_ACCOUNT_EDGE_URL = "https://account-edge.example"
+        settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN = "account-edge-service-token"
         monkeypatch.setenv("TAKAHE_STATOR_TOKEN", "stator-secret-token")
         monkeypatch.setenv("TAKAHE_MAIN_DOMAIN", "fedi.example.org")
         self._login(client, superuser=True)
@@ -696,6 +700,14 @@ class TestEnvironmentPage:
         assert settings.SITE_DOMAIN in html
         assert "NEODB_SECRET_KEY" in html
         assert "top-secret-key-value" not in html
+        assert "NEODB_ONEID_ISSUER" in html
+        assert settings.ONEID_ISSUER in html
+        assert "NEODB_ONEID_CLIENT_SECRET" in html
+        assert settings.ONEID_CLIENT_SECRET not in html
+        assert "NEODB_PIXELFED_ACCOUNT_EDGE_URL" in html
+        assert settings.PIXELFED_ACCOUNT_EDGE_URL in html
+        assert "NEODB_PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN" in html
+        assert settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN not in html
         # variables this process has that settings does not read are listed raw
         assert "TAKAHE_MAIN_DOMAIN" in html
         assert "fedi.example.org" in html

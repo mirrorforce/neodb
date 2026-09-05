@@ -1064,6 +1064,35 @@ class EnvironmentSettings(TemplateView):
             ("NEODB_SENTRY_DSN", lambda: settings.SENTRY_DSN),
             ("NEODB_SENTRY_SAMPLE_RATE", lambda: settings.SENTRY_SAMPLE_RATE),
         ],
+        _("OneID"): [
+            ("NEODB_ONEID_ISSUER", lambda: settings.ONEID_ISSUER),
+            ("NEODB_ONEID_HTTP_TIMEOUT", lambda: settings.ONEID_HTTP_TIMEOUT),
+            ("NEODB_ONEID_CLIENT_ID", lambda: settings.ONEID_CLIENT_ID),
+            ("NEODB_ONEID_CLIENT_SECRET", lambda: settings.ONEID_CLIENT_SECRET),
+            ("NEODB_ONEID_DISCOVERY_URL", lambda: settings.ONEID_DISCOVERY_URL),
+            ("NEODB_ONEID_REDIRECT_URI", lambda: settings.ONEID_REDIRECT_URI),
+            ("NEODB_ONEID_SCOPE", lambda: settings.ONEID_SCOPE),
+            ("NEODB_ONEID_SUBJECT_CLAIM", lambda: settings.ONEID_SUBJECT_CLAIM),
+            (
+                "NEODB_ONEID_ACCEPTED_SOURCE_ATTRIBUTES",
+                lambda: settings.ONEID_ACCEPTED_SOURCE_ATTRIBUTES,
+            ),
+            ("NEODB_ONEID_CLOCK_SKEW", lambda: settings.ONEID_CLOCK_SKEW),
+        ],
+        _("Pixelfed Account Edge"): [
+            (
+                "NEODB_PIXELFED_ACCOUNT_EDGE_URL",
+                lambda: settings.PIXELFED_ACCOUNT_EDGE_URL,
+            ),
+            (
+                "NEODB_PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN",
+                lambda: settings.PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN,
+            ),
+            (
+                "NEODB_PIXELFED_ACCOUNT_EDGE_TIMEOUT",
+                lambda: settings.PIXELFED_ACCOUNT_EDGE_TIMEOUT,
+            ),
+        ],
         _("Security"): [
             ("NEODB_SECRET_KEY", lambda: settings.SECRET_KEY),
         ],
