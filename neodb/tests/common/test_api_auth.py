@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from django.contrib.sessions.backends.db import SessionStore
 from django.test import Client
 from journal.models import Tag
 from takahe.utils import Takahe
@@ -64,6 +65,33 @@ def test_invalid_bearer_does_not_fall_back_to_product_session():
 
 
 @pytest.mark.django_db(databases="__all__")
+def test_bearer_identity_wins_over_different_product_session():
+    session_user = _product_user("session-user-b")
+    bearer_user = _product_user("bearer-user-a")
+    bearer = _bearer(bearer_user)
+    client = Client()
+    client.force_login(session_user, backend="mastodon.auth.OAuth2Backend")
+
+    response = client.get(
+        "/api/me",
+        HTTP_AUTHORIZATION=f"Bearer {bearer}",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["username"] == bearer_user.username
+
+    created = client.post(
+        "/api/me/tag/",
+        data=json.dumps({"title": "Bearer owner", "visibility": 0}),
+        content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {bearer}",
+    )
+
+    assert created.status_code == 200
+    assert Tag.objects.get(title="Bearer owner").owner == bearer_user.identity
+
+
+@pytest.mark.django_db(databases="__all__")
 def test_logout_terminates_product_api_session():
     user = _product_user("logout-api-user")
     client = Client()
@@ -71,6 +99,20 @@ def test_logout_terminates_product_api_session():
     assert client.get("/api/me").status_code == 200
 
     client.logout()
+
+    assert client.get("/api/me").status_code == 401
+
+
+@pytest.mark.django_db(databases="__all__")
+def test_expired_product_api_session_is_rejected():
+    user = _product_user("expired-api-user")
+    client = Client()
+    client.force_login(user, backend="mastodon.auth.OAuth2Backend")
+    assert client.get("/api/me").status_code == 200
+
+    session = SessionStore(client.session.session_key)
+    session.set_expiry(-1)
+    session.save()
 
     assert client.get("/api/me").status_code == 401
 
@@ -117,10 +159,26 @@ def test_product_session_survives_unavailable_community_account():
         technical_handle=user.username,
         state=ManagedCommunityAccount.State.UNKNOWN,
     )
+    before_users = set(User.objects.values_list("pk", flat=True))
+    before_bindings = set(ManagedIdentityBinding.objects.values_list("pk", flat=True))
+    before_community_accounts = set(
+        ManagedCommunityAccount.objects.values_list("pk", flat=True)
+    )
     client = Client()
     client.force_login(user, backend="mastodon.auth.OAuth2Backend")
 
     response = client.get("/api/me")
+    repeat = client.get("/api/me")
 
     assert response.status_code == 200
     assert response.json()["username"] == user.username
+    assert repeat.status_code == 200
+    assert set(User.objects.values_list("pk", flat=True)) == before_users
+    assert (
+        set(ManagedIdentityBinding.objects.values_list("pk", flat=True))
+        == before_bindings
+    )
+    assert (
+        set(ManagedCommunityAccount.objects.values_list("pk", flat=True))
+        == before_community_accounts
+    )

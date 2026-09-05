@@ -32,7 +32,7 @@ class OAuthAccessTokenAuth(HttpBearer):
     def __call__(self, request: HttpRequest) -> bool:
         # An Authorization header is authoritative. In particular, a bad or
         # revoked bearer must not become a session-authenticated request.
-        if request.headers.get("Authorization"):
+        if "HTTP_AUTHORIZATION" in request.META:
             return super().__call__(request) or False
         return self._authenticate_session(request)
 
@@ -105,8 +105,7 @@ class OptionalOAuthAccessTokenAuth(OAuthAccessTokenAuth):
     """Auth that processes Bearer token if present, but allows anonymous access."""
 
     def __call__(self, request: HttpRequest) -> bool:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header:
+        if "HTTP_AUTHORIZATION" not in request.META:
             return self._authenticate_session(request) or True
         return super().__call__(request) or False
 
