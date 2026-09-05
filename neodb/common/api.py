@@ -20,6 +20,7 @@ from common.models import SiteConfig
 PERMITTED_WRITE_METHODS = ["PUT", "POST", "DELETE", "PATCH"]
 PERMITTED_READ_METHODS = ["GET", "HEAD", "OPTIONS"]
 
+
 def _csrf_get_response(request: HttpRequest) -> HttpResponse:
     return HttpResponse()
 
