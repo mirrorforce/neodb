@@ -115,7 +115,7 @@ x-shared:
       neodb-db:
         condition: service_healthy
       typesense:
-        condition: service_healthy
+        condition: service_started
       takahe-db:
         condition: service_healthy
     profiles:
@@ -152,11 +152,6 @@ services:
   typesense:
     image: typesense/typesense:30.1@sha256:91604dc128e2023e7cba34ae8bd36f68351bcb74ea33a84960bfdc5649cf43b3
     restart: "on-failure"
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8108/health"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
     # ports:
     #   - "18108:8108"
     environment:
@@ -195,7 +190,7 @@ services:
       neodb-db:
         condition: service_healthy
       typesense:
-        condition: service_healthy
+        condition: service_started
       redis:
         condition: service_healthy
       takahe-db:

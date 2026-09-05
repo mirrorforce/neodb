@@ -56,6 +56,24 @@ SEARCH
   local Docker Typesense for this profile = NOT REQUIRED
 ```
 
+## Host runtime precision
+
+Project Python compatibility is `pyproject.toml requires-python = >=3.14,<3.15`.
+`.python-version = 3.14` is a minor-line selector, not an exact patch pin.
+For machine-local Windows, macOS, or Linux host T1, any compatible CPython
+3.14.x is admissible. Record the actual host Python patch and build in
+`RUNNER_IDENTITY` evidence; it is not a hard requirement by default.
+
+The Docker Python patch and the Python patch resolved by GitHub CI do not govern
+the host Python patch. An exact host Python patch pin is allowed only when
+current owner authority proves a patch-specific compatibility, security, or
+toolchain need.
+
+Docker uv 0.8.8 belongs to the Docker build identity. Host T1 requires the exact
+task source, exact `uv.lock`, a successful locked sync, and the actual host uv
+version recorded in evidence. Host uv does not need to equal Docker uv 0.8.8
+unless current claim-specific evidence requires it.
+
 The remote Typesense endpoint and credential are machine-local/private runtime
 inputs. They must not be committed, printed, copied into Issue/PR evidence, or
 reconstructed from a public document. Use the configured local secure-store
