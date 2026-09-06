@@ -43,6 +43,34 @@ NEODB_IMAGE=neodb/neodb:edge
 NEODB_DEBUG=True
 ```
 
+For the owner-runtime Identity and Account Edge proof, add the existing
+configuration inputs to the same local-only `.env` file. Never commit this
+file or place real credentials in documentation:
+
+```
+NEODB_ONEID_ISSUER=<provider-issuer>
+NEODB_ONEID_CLIENT_ID=<registered-client-id>
+NEODB_ONEID_CLIENT_SECRET=<local-only-client-secret>
+NEODB_ONEID_DISCOVERY_URL=<provider-discovery-url>
+NEODB_ONEID_REDIRECT_URI=http://127.0.0.1:8000/account/oneid/callback
+NEODB_ONEID_SCOPE=openid
+NEODB_ONEID_SUBJECT_CLAIM=sub
+NEODB_ONEID_ACCEPTED_SOURCE_ATTRIBUTES=[]
+NEODB_ONEID_CLOCK_SKEW=60
+NEODB_ONEID_HTTP_TIMEOUT=10
+NEODB_PIXELFED_ACCOUNT_EDGE_URL=<account-edge-url>
+NEODB_PIXELFED_ACCOUNT_EDGE_SERVICE_TOKEN=<local-only-service-token>
+NEODB_PIXELFED_ACCOUNT_EDGE_TIMEOUT=10
+```
+
+The shared Compose environment passes these values to the development NeoDB
+web and worker processes. After changing `.env`, apply the existing dev
+profile so those processes are recreated with the new environment:
+
+```
+docker compose --profile dev up -d
+```
+
 Download docker images and start pgsql/redis/typesense before initializing database schema:
 ```
 docker compose --profile dev pull
