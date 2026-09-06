@@ -188,6 +188,37 @@ def ensure_managed_community_account(
     return account
 
 
+def recover_rejected_managed_community_account(account_id: int) -> bool:
+    """Explicitly reopen one rejected responsibility for normal reconciliation."""
+
+    with transaction.atomic():
+        try:
+            account = ManagedCommunityAccount.objects.select_for_update().get(
+                pk=account_id
+            )
+        except ManagedCommunityAccount.DoesNotExist:
+            return False
+        if account.state != ManagedCommunityAccount.State.REJECTED:
+            return False
+        account.state = ManagedCommunityAccount.State.UNKNOWN
+        account.next_attempt_at = None
+        account.last_error_category = ""
+        account.last_error_at = None
+        account.save(
+            update_fields=[
+                "state",
+                "next_attempt_at",
+                "last_error_category",
+                "last_error_at",
+                "updated_at",
+            ]
+        )
+        transaction.on_commit(
+            lambda account_id=account.pk: _enqueue_managed_community_account(account_id)
+        )
+    return True
+
+
 def _enqueue_managed_community_account(account_id: int) -> None:
     try:
         django_rq.get_queue("mastodon").enqueue(
