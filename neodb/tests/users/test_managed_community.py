@@ -247,7 +247,9 @@ def test_explicit_recovery_does_not_reset_non_rejected_state(state):
 
 
 @pytest.mark.django_db(databases="__all__", transaction=True)
-def test_repeated_explicit_recovery_is_bounded_and_command_emits_no_secrets(monkeypatch):
+def test_repeated_explicit_recovery_is_bounded_and_command_emits_no_secrets(
+    monkeypatch,
+):
     account = _rejected_account(username="vhcommand123")
     queued: list[tuple[Any, tuple[Any, ...]]] = []
 
