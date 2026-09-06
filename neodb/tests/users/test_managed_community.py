@@ -209,7 +209,6 @@ def test_explicit_recovery_reopens_same_account_and_enqueues_normal_worker(monke
 
     account.refresh_from_db()
     assert account.state == ManagedCommunityAccount.State.UNKNOWN
-    assert account.pk == account.id
     assert account.binding_id == binding_id
     assert account.binding.user_id == user_id
     assert account.attempt_count == 9
@@ -235,7 +234,9 @@ def test_explicit_recovery_does_not_reset_non_rejected_state(state):
     account.state = state
     account.attempt_count = 4
     account.last_error_category = "existing"
-    account.save(update_fields=["state", "attempt_count", "last_error_category", "updated_at"])
+    account.save(
+        update_fields=["state", "attempt_count", "last_error_category", "updated_at"]
+    )
 
     assert recover_rejected_managed_community_account(account.pk) is False
 

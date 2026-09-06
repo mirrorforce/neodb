@@ -15,9 +15,7 @@ class Command(SiteCommand):
     def handle(self, *args, **options):
         account_id = options["account_id"]
         if not recover_rejected_managed_community_account(account_id):
-            raise CommandError(
-                "ManagedCommunityAccount is missing or is not rejected"
-            )
+            raise CommandError("ManagedCommunityAccount is missing or is not rejected")
         self.stdout.write(
             self.style.SUCCESS(
                 f"ManagedCommunityAccount {account_id} recovery accepted."
