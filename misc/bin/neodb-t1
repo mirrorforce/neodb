@@ -9,5 +9,79 @@ if [ -z "${NEODB_SEARCH_URL:-}" ]; then
     exit 2
 fi
 
+case "${NEODB_OWNER_TEST_PROFILE:-}" in
+    LOCAL_DOCKER_TYPESENSE|REMOTE_TYPESENSE) ;;
+    *)
+        echo "NEODB_OWNER_TEST_PROFILE must explicitly select LOCAL_DOCKER_TYPESENSE or REMOTE_TYPESENSE" >&2
+        exit 2
+        ;;
+esac
+
+"$PYTHON" - <<'PY'
+import json
+import os
+import sys
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
+
+
+def fail(message):
+    print(f"Typesense preflight failed: {message}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def endpoint_from_search_url(search_url):
+    parsed = urlparse(search_url)
+    if parsed.scheme != "typesense" or not parsed.hostname:
+        fail("NEODB_SEARCH_URL is not a Typesense URL")
+    try:
+        port = parsed.port or 8108
+    except ValueError:
+        fail("NEODB_SEARCH_URL has an invalid Typesense port")
+    host = parsed.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:{port}", unquote(parsed.password or "")
+
+
+def get_json(base_url, path, api_key):
+    request = Request(
+        f"{base_url}{path}",
+        headers={"X-TYPESENSE-API-KEY": api_key},
+    )
+    with urlopen(request, timeout=3) as response:
+        return json.load(response)
+
+
+def check_typesense(search_url):
+    base_url, api_key = endpoint_from_search_url(search_url)
+    if not api_key:
+        fail("Typesense API credential is missing")
+    health = get_json(base_url, "/health", api_key)
+    debug = get_json(base_url, "/debug", api_key)
+    get_json(base_url, "/collections", api_key)
+    if health.get("ok") is not True or str(debug.get("version")) != "30.1":
+        raise RuntimeError("unexpected Typesense response")
+
+
+last_error = None
+for attempt in range(30):
+    try:
+        check_typesense(os.environ["NEODB_SEARCH_URL"])
+        break
+    except (HTTPError, RuntimeError) as error:
+        if isinstance(error, HTTPError) and error.code >= 400:
+            fail("health/authentication/version check failed")
+        last_error = error
+    except (KeyError, URLError, TimeoutError, OSError, ValueError) as error:
+        last_error = error
+    if attempt < 29:
+        time.sleep(2)
+else:
+    fail("health/authentication/version check failed")
+PY
+
 "$PYTHON" manage.py compilemessages -l zh_Hans
 exec "$PYTHON" -m pytest -n auto --cov=. --cov-report=term-missing --cov-report=xml

@@ -1,149 +1,129 @@
 [CmdletBinding()]
 param(
-    [string]$ComposeProject = "neodb-owner-tests-local",
-    [switch]$Configure
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("LOCAL_DOCKER_TYPESENSE", "REMOTE_TYPESENSE")]
+    [string]$Profile,
+    [string]$ComposeProject = "neodb-owner-tests"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$secretRoot = Join-Path $env:USERPROFILE ".vinylhub-secrets"
-$endpointFile = if ($env:NEODB_TYPESENSE_ENDPOINT_FILE) {
-    $env:NEODB_TYPESENSE_ENDPOINT_FILE
-} else {
-    Join-Path $secretRoot "typesense-t1.endpoint"
-}
-$protectedKeyFile = if ($env:NEODB_TYPESENSE_KEY_FILE) {
-    $env:NEODB_TYPESENSE_KEY_FILE
-} else {
-    Join-Path $secretRoot "typesense-t1.dpapi"
-}
 $dataRoot = Join-Path ([IO.Path]::GetTempPath()) "neodb-owner-tests-$PID"
-$secureKey = $null
-$keyPointer = [IntPtr]::Zero
-$plainKey = $null
-$endpoint = $null
+$remoteEndpoint = $null
+$remoteApiKey = $null
 $searchUrl = $null
+$exitCode = 1
 
-if ($Configure) {
-    $configurationKey = $null
-    $endpointInput = $null
-    $protectedConfigurationValue = $null
-    $createdConfigurationFiles = @()
-    $createdConfigurationDirectories = @()
-    try {
-        foreach ($path in @($protectedKeyFile, $endpointFile)) {
-            if (Test-Path -LiteralPath $path) {
-                throw "Existing Typesense configuration detected; refusing overwrite"
-            }
-        }
+$originalEnvironment = @{}
+foreach ($name in @(
+        "NEODB_SEARCH_URL",
+        "NEODB_DATA",
+        "NEODB_OWNER_TEST_PROFILE",
+        "NEODB_OWNER_TEST_SOURCE_SHA",
+        "NEODB_OWNER_TEST_SOURCE_TREE"
+    )) {
+    $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
 
-        $configurationParents = @(
-            (Split-Path -Path $protectedKeyFile -Parent),
-            (Split-Path -Path $endpointFile -Parent)
-        ) | Where-Object { $_ } | Sort-Object -Unique
-        foreach ($parent in $configurationParents) {
-            if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
-                New-Item -ItemType Directory -Path $parent -Force | Out-Null
-                $createdConfigurationDirectories += $parent
-            }
-        }
-
-        $endpointInput = (Read-Host "Remote Typesense endpoint").Trim()
-        if ([string]::IsNullOrWhiteSpace($endpointInput)) {
-            throw "Typesense endpoint must not be empty"
-        }
-        $configurationKey = Read-Host "Remote Typesense API key" -AsSecureString
-        if ($null -eq $configurationKey -or $configurationKey.Length -eq 0) {
-            throw "Typesense API key must not be empty"
-        }
-
-        $protectedConfigurationValue = ConvertFrom-SecureString -SecureString $configurationKey
-        $utf8NoBom = [Text.UTF8Encoding]::new($false)
-        [IO.File]::WriteAllText($protectedKeyFile, $protectedConfigurationValue, $utf8NoBom)
-        $createdConfigurationFiles += $protectedKeyFile
-        [IO.File]::WriteAllText($endpointFile, $endpointInput, $utf8NoBom)
-        $createdConfigurationFiles += $endpointFile
-
-        "CONFIGURATION_RESULT = PASS"
-        "KEY_FILE_CREATED = YES"
-        "ENDPOINT_FILE_CREATED = YES"
-    } catch {
-        foreach ($path in $createdConfigurationFiles) {
-            if (Test-Path -LiteralPath $path -PathType Leaf) {
-                Remove-Item -LiteralPath $path -Force
-            }
-        }
-        foreach ($parent in ($createdConfigurationDirectories | Sort-Object Length -Descending)) {
-            $parentHasEntries = @(Get-ChildItem -LiteralPath $parent -Force).Count -gt 0
-            if ((Test-Path -LiteralPath $parent -PathType Container) -and -not $parentHasEntries) {
-                Remove-Item -LiteralPath $parent -Force
-            }
-        }
-        throw "Typesense configuration failed; existing entries were not overwritten"
-    } finally {
-        if ($configurationKey) {
-            $configurationKey.Dispose()
-        }
-        $endpointInput = $null
-        $protectedConfigurationValue = $null
+function Restore-ProcessEnvironment {
+    foreach ($name in $originalEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $originalEnvironment[$name], "Process")
     }
-    return
+}
+
+function Get-TypesenseEndpointUri {
+    param([string]$Endpoint)
+
+    if ([string]::IsNullOrWhiteSpace($Endpoint)) {
+        throw "NEODB_TYPESENSE_ENDPOINT must be set for REMOTE_TYPESENSE"
+    }
+
+    $endpointUri = if ($Endpoint -match "^https?://") {
+        [Uri]$Endpoint
+    } else {
+        [Uri]("http://$Endpoint")
+    }
+    if ($endpointUri.Scheme -notin @("http", "https") -or
+        [string]::IsNullOrWhiteSpace($endpointUri.Host) -or
+        $endpointUri.UserInfo -or
+        ($endpointUri.AbsolutePath -notin @("", "/")) -or
+        $endpointUri.Query -or
+        $endpointUri.Fragment) {
+        throw "NEODB_TYPESENSE_ENDPOINT must be a host, host:port, or an HTTP(S) endpoint without credentials or a path"
+    }
+    if (-not $endpointUri.IsDefaultPort -and ($endpointUri.Port -lt 1 -or $endpointUri.Port -gt 65535)) {
+        throw "NEODB_TYPESENSE_ENDPOINT has an invalid port"
+    }
+    if ($endpointUri.IsDefaultPort) {
+        $builder = [UriBuilder]$endpointUri
+        $builder.Port = 8108
+        $endpointUri = $builder.Uri
+    }
+    return $endpointUri
 }
 
 try {
-    if (-not (Test-Path -LiteralPath $endpointFile -PathType Leaf)) {
-        throw "Typesense endpoint secure-store entry is unavailable: $endpointFile"
-    }
-    if (-not (Test-Path -LiteralPath $protectedKeyFile -PathType Leaf)) {
-        throw "Typesense DPAPI secure-store entry is unavailable: $protectedKeyFile"
-    }
-
-    $endpoint = [IO.File]::ReadAllText($endpointFile).Trim()
-    $protectedValue = [IO.File]::ReadAllText($protectedKeyFile).Trim()
-    if ([string]::IsNullOrWhiteSpace($endpoint) -or [string]::IsNullOrWhiteSpace($protectedValue)) {
-        throw "Typesense secure-store entry is empty or unusable"
-    }
-
-    $secureKey = ConvertTo-SecureString -String $protectedValue
-    $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
-    $plainKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($keyPointer)
-    if ([string]::IsNullOrWhiteSpace($plainKey)) {
-        throw "Typesense DPAPI secure-store entry is unusable"
-    }
-
-    $endpointUri = if ($endpoint -match "^https?://") {
-        [Uri]$endpoint
-    } else {
-        [Uri]("http://$endpoint")
-    }
-    if ($endpoint -notmatch "^(?:https?://)?(?:\[[^\]]+\]|[^/:]+):\d+(?:/|$)") {
-        $endpointBuilder = [UriBuilder]$endpointUri
-        $endpointBuilder.Port = 8108
-        $endpointUri = $endpointBuilder.Uri
-    }
-    $baseUri = $endpointUri.AbsoluteUri.TrimEnd('/')
-    $typesenseHeaders = @{ "X-TYPESENSE-API-KEY" = $plainKey }
-    try {
-        $health = Invoke-RestMethod -Uri "$baseUri/health" -Headers $typesenseHeaders -TimeoutSec 10
-        $debug = Invoke-RestMethod -Uri "$baseUri/debug" -Headers $typesenseHeaders -TimeoutSec 10
-        $null = Invoke-RestMethod -Uri "$baseUri/collections" -Headers $typesenseHeaders -TimeoutSec 10
-        if ($health.ok -ne $true -or [string]$debug.version -ne "30.1") {
-            throw "unexpected remote Typesense response"
-        }
-    } catch {
-        throw "Remote Typesense health/authentication check failed"
-    }
-
-    # The URL is process-scoped and is never written to a file or emitted.
-    $searchUrl = "typesense://user:$plainKey@$($endpointUri.Authority)/catalog"
-    $env:NEODB_SEARCH_URL = $searchUrl
+    $env:NEODB_OWNER_TEST_PROFILE = $Profile
     $env:NEODB_DATA = $dataRoot
     $env:NEODB_OWNER_TEST_SOURCE_SHA = (& git -C $repoRoot rev-parse HEAD).Trim()
-    $env:NEODB_OWNER_TEST_SOURCE_TREE = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+    $env:NEODB_OWNER_TEST_SOURCE_TREE = (& git -C $repoRoot rev-parse "HEAD^{tree}").Trim()
+
+    if ($Profile -eq "LOCAL_DOCKER_TYPESENSE") {
+        $composeProfile = "owner-tests-local"
+        $ownerTestService = "neodb-owner-tests-local"
+        $searchUrl = "typesense://user:eggplant@typesense:8108/catalog"
+        $safeEndpoint = "typesense:8108"
+        $secretSource = "NONE"
+    } else {
+        $composeProfile = "owner-tests-remote"
+        $ownerTestService = "neodb-owner-tests"
+        $remoteEndpoint = Get-TypesenseEndpointUri $env:NEODB_TYPESENSE_ENDPOINT
+        $remoteApiKey = $env:NEODB_TYPESENSE_API_KEY
+        if ([string]::IsNullOrWhiteSpace($remoteApiKey)) {
+            throw "NEODB_TYPESENSE_API_KEY must be set for REMOTE_TYPESENSE"
+        }
+
+        $typesenseHeaders = @{ "X-TYPESENSE-API-KEY" = $remoteApiKey }
+        try {
+            $health = Invoke-RestMethod -Uri "$($remoteEndpoint.AbsoluteUri.TrimEnd('/'))/health" -Headers $typesenseHeaders -TimeoutSec 10
+            $debug = Invoke-RestMethod -Uri "$($remoteEndpoint.AbsoluteUri.TrimEnd('/'))/debug" -Headers $typesenseHeaders -TimeoutSec 10
+            $null = Invoke-RestMethod -Uri "$($remoteEndpoint.AbsoluteUri.TrimEnd('/'))/collections" -Headers $typesenseHeaders -TimeoutSec 10
+            if ($health.ok -ne $true -or [string]$debug.version -ne "30.1") {
+                throw "unexpected remote Typesense response"
+            }
+        } catch {
+            throw "Remote Typesense health/authentication/version check failed"
+        }
+
+        $escapedApiKey = [Uri]::EscapeDataString($remoteApiKey)
+        $searchUrl = "typesense://user:$escapedApiKey@$($remoteEndpoint.Authority)/catalog"
+        $safeEndpoint = $remoteEndpoint.Authority
+        $secretSource = "PROCESS_ENVIRONMENT"
+    }
+
+    $env:NEODB_SEARCH_URL = $searchUrl
+    "OWNER_TESTS_PROFILE = $Profile"
+    "TYPESENSE_VERSION = 30.1"
+    "TYPESENSE_ENDPOINT = $safeEndpoint"
+    "TYPESENSE_SECRET_SOURCE = $secretSource"
+    "SECRET_VALUE_RETAINED_IN_REPORT = NO"
 
     Push-Location $repoRoot
     try {
-        & docker compose -p $ComposeProject --profile owner-tests up --build --abort-on-container-exit --exit-code-from neodb-owner-tests neodb-owner-tests neodb-db takahe-db redis
+        $composeArguments = @(
+            "compose",
+            "-p", $ComposeProject,
+            "--profile", $composeProfile,
+            "up",
+            "--build",
+            "--abort-on-container-exit",
+            "--exit-code-from", $ownerTestService,
+            $ownerTestService,
+            "neodb-db",
+            "takahe-db",
+            "redis"
+        )
+        & docker @composeArguments
         $exitCode = $LASTEXITCODE
     } finally {
         Pop-Location
@@ -154,25 +134,15 @@ try {
 } finally {
     Push-Location $repoRoot
     try {
-        & docker compose -p $ComposeProject --profile owner-tests down --volumes --remove-orphans | Out-Host
+        & docker compose -p $ComposeProject down --volumes --remove-orphans | Out-Host
     } finally {
         Pop-Location
     }
     if (Test-Path -LiteralPath $dataRoot) {
         Remove-Item -LiteralPath $dataRoot -Recurse -Force
     }
-    $env:NEODB_SEARCH_URL = $null
-    $env:NEODB_DATA = $null
-    $env:NEODB_OWNER_TEST_SOURCE_SHA = $null
-    $env:NEODB_OWNER_TEST_SOURCE_TREE = $null
-    $plainKey = $null
-    $endpoint = $null
+    Restore-ProcessEnvironment
+    $remoteEndpoint = $null
+    $remoteApiKey = $null
     $searchUrl = $null
-    if ($keyPointer -ne [IntPtr]::Zero) {
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($keyPointer)
-        $keyPointer = [IntPtr]::Zero
-    }
-    if ($secureKey) {
-        $secureKey.Dispose()
-    }
 }
