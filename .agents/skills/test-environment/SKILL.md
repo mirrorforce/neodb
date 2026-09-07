@@ -143,8 +143,38 @@ task-owned temporary data path even after failure.
 
 ## Canonical OWNER TESTS commands
 
-The supported host command is the explicit profile command above. Inside the
-Linux test container, `/bin/neodb-owner-test` runs these commands in order:
+The supported host command is the explicit profile command above. The host
+wrapper first requires a clean exact checkout, then builds a run-unique
+owner-test image under a run-unique Compose project. It emits one compact JSON
+result envelope on stdout and exits `0` if and only if `status=PASS`; all other
+outcomes exit non-zero. The envelope's required shared fields are:
+
+```json
+{
+  "status": "PASS | BLOCKED",
+  "evidenceClass": "OWNER TESTS",
+  "admission": "PASS | BLOCKED",
+  "testResult": "PASS | FAIL | NOT_RUN",
+  "sourceSha": "<exact commit SHA>",
+  "sourceTree": "<exact tree SHA>",
+  "project": "<run-unique task-owned project>",
+  "cleanup": "PASS | BLOCKED | NOT_REQUIRED",
+  "failureStep": "<bounded non-secret step or null>",
+  "failureExitCode": "<integer or null>",
+  "failureReason": "<bounded non-secret reason or null>"
+}
+```
+
+NeoDB may add non-secret owner fields such as profile, Typesense version,
+image identity, and diagnostic-log lifecycle. The wrapper removes the exact
+run-owned image, Compose resources, disposable data, and remote collection
+namespace before reporting `cleanup=PASS`; cleanup failure changes a would-be
+PASS to `status=BLOCKED`. It restores every process-environment value it
+changes. CI invokes this same host primitive; it must not maintain a second
+handwritten owner-test Docker topology.
+
+Inside the Linux test container, `/bin/neodb-owner-test` runs these commands
+in order:
 
 ```text
 uv run --project .. python manage.py compilemessages -l zh_Hans
@@ -171,6 +201,8 @@ credential-bearing URLs, or private key material.
 ENVIRONMENT_ADMISSION = PASS / BLOCKED
 VALIDATION_CONTEXT = OWNER TESTS / OWNER RUNTIME / VINYLHUB DEVELOPMENT
 OWNER_TESTS_PROFILE = LOCAL_DOCKER_TYPESENSE / REMOTE_TYPESENSE
+OWNER_TEST_PROJECT
+OWNER_TEST_IMAGE
 RUNNER_PLATFORM
 RUNNER_IDENTITY
 SOURCE_SHA

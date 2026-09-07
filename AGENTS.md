@@ -72,6 +72,11 @@ tasks, closed Issues, historical branches, or source archaeology.
   requirements but does not admit that cross-repository composition. An
   app-owned VINYLHUB DEVELOPMENT topology must not
   silently overwrite the NeoDB OWNER TESTS profile.
+- The canonical NeoDB owner-test primitive requires a clean exact checkout,
+  uses run-unique disposable project/image/state, emits the shared OWNER TESTS
+  JSON result envelope, restores caller process environment, and is the only
+  owner-test topology CI may invoke. Full Product development routes to the
+  App; NeoDB never reads App `.env` or discovers a sibling App checkout.
 - OWNER TESTS evidence does not prove OWNER RUNTIME behavior, and OWNER RUNTIME
   evidence does not prove VINYLHUB DEVELOPMENT behavior.
 - Preserve exact commands, outcomes, changed paths, non-scope, and bounded unknowns
