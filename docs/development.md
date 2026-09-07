@@ -11,6 +11,15 @@ Prerequisite
 - Python 3.14.x
 - Docker Compose v2 or newer
 
+VinylHub development boundary
+-----------------------------
+Full VinylHub product development, cross-repository integration, persistent
+product state, and real Identity/Authing callbacks are owned by the
+`mirrorforce/vinyl-catalog-app` repository. Use this NeoDB repository for
+standalone NeoDB development and its explicit `OWNER TESTS` / `OWNER RUNTIME`
+workflows. NeoDB owner-test commands consume explicit arguments or process
+environment only; they do not read the App checkout or the App `.env` file.
+
 
 Prepare the code
 ----------------

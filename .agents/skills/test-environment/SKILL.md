@@ -16,7 +16,29 @@ legitimate only when the record says `ENVIRONMENT_ADMISSION = PASS`. Missing,
 contradictory, substituted, or unproven prerequisites produce `BLOCKED`; do
 not run the dependent command merely to rediscover a known mismatch.
 
-## Current VinylHub machine-local canonical OWNER TESTS profile
+## Current VinylHub OWNER TESTS runner/profile matrix
+
+The accepted profile is capability- and runner-specific. These profiles are
+not interchangeable and are never automatic fallbacks:
+
+```text
+CURRENT TARGET WINDOWS WORKSTATION
+  required profile = REMOTE_TYPESENSE
+  LOCAL_DOCKER_TYPESENSE = BLOCKED before Docker/Typesense startup
+  missing endpoint/key = ENVIRONMENT_ADMISSION BLOCKED / OWNER TESTS NOT_RUN
+  target REMOTE evidence = only with explicit private process inputs
+
+GITHUB ACTIONS UBUNTU RUNNER
+  allowed profile = LOCAL_DOCKER_TYPESENSE
+  purpose = disposable repository CI OWNER TESTS only
+  CI local PASS = not target-workstation REMOTE evidence
+```
+
+The current Windows target must not retry the known-incompatible local
+Typesense 30.1 path (exit 139). No profile selection or fallback may be
+inferred from service availability.
+
+## Current canonical OWNER TESTS profiles
 
 The current machine-local OWNER TESTS runner is a Linux Docker container built
 from the exact repository source. Search is capability-selected between the
@@ -106,6 +128,12 @@ $env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile REMOTE_TYPESENSE
 ```
 
+On the current Windows target, selecting `LOCAL_DOCKER_TYPESENSE` fails closed
+at profile preflight with `status=BLOCKED`, `testResult=NOT_RUN`, before any
+Docker or Typesense startup. The wrapper does not select REMOTE automatically.
+GitHub Actions Ubuntu invokes `LOCAL_DOCKER_TYPESENSE` as disposable CI only;
+that result must not be promoted to target-workstation REMOTE evidence.
+
 The endpoint must be a remote host or host:port only; do not include `http://`,
 `https://`, credentials, or a path. An omitted port uses 8108. NeoDB's current
 Typesense client uses HTTP for the resulting node connection. The remote key
@@ -143,8 +171,38 @@ task-owned temporary data path even after failure.
 
 ## Canonical OWNER TESTS commands
 
-The supported host command is the explicit profile command above. Inside the
-Linux test container, `/bin/neodb-owner-test` runs these commands in order:
+The supported host command is the explicit profile command above. The host
+wrapper first requires a clean exact checkout, then builds a run-unique
+owner-test image under a run-unique Compose project. It emits one compact JSON
+result envelope on stdout and exits `0` if and only if `status=PASS`; all other
+outcomes exit non-zero. The envelope's required shared fields are:
+
+```json
+{
+  "status": "PASS | BLOCKED",
+  "evidenceClass": "OWNER TESTS",
+  "admission": "PASS | BLOCKED",
+  "testResult": "PASS | FAIL | NOT_RUN",
+  "sourceSha": "<exact commit SHA>",
+  "sourceTree": "<exact tree SHA>",
+  "project": "<run-unique task-owned project>",
+  "cleanup": "PASS | BLOCKED | NOT_REQUIRED",
+  "failureStep": "<bounded non-secret step or null>",
+  "failureExitCode": "<integer or null>",
+  "failureReason": "<bounded non-secret reason or null>"
+}
+```
+
+NeoDB may add non-secret owner fields such as profile, Typesense version,
+image identity, and diagnostic-log lifecycle. The wrapper removes the exact
+run-owned image, Compose resources, disposable data, and remote collection
+namespace before reporting `cleanup=PASS`; cleanup failure changes a would-be
+PASS to `status=BLOCKED`. It restores every process-environment value it
+changes. CI invokes this same host primitive; it must not maintain a second
+handwritten owner-test Docker topology.
+
+Inside the Linux test container, `/bin/neodb-owner-test` runs these commands
+in order:
 
 ```text
 uv run --project .. python manage.py compilemessages -l zh_Hans
@@ -171,6 +229,8 @@ credential-bearing URLs, or private key material.
 ENVIRONMENT_ADMISSION = PASS / BLOCKED
 VALIDATION_CONTEXT = OWNER TESTS / OWNER RUNTIME / VINYLHUB DEVELOPMENT
 OWNER_TESTS_PROFILE = LOCAL_DOCKER_TYPESENSE / REMOTE_TYPESENSE
+OWNER_TEST_PROJECT
+OWNER_TEST_IMAGE
 RUNNER_PLATFORM
 RUNNER_IDENTITY
 SOURCE_SHA

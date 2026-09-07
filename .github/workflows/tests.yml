@@ -19,104 +19,18 @@ permissions:
 jobs:
   neodb:
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-        ports:
-          - 6379:6379
-      db:
-        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
-        env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpass
-          POSTGRES_DB: test_neodb
-        options: >-
-          --health-cmd "pg_isready -U testuser -d test_neodb"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-        ports:
-          - 5432:5432
-      db2:
-        image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310
-        env:
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpass
-          POSTGRES_DB: test_neodb_takahe
-        options: >-
-          --health-cmd "pg_isready -U testuser -d test_neodb_takahe"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-        ports:
-          - 15432:5432
-      typesense:
-        image: typesense/typesense:30.1@sha256:91604dc128e2023e7cba34ae8bd36f68351bcb74ea33a84960bfdc5649cf43b3
-        env:
-          TYPESENSE_API_KEY: testpass
-          TYPESENSE_DATA_DIR: /data
-        ports:
-          - 8108:8108
-        volumes:
-          - ts_data:/data
-    strategy:
-      max-parallel: 4
-      matrix:
-        python-version: ['3.14']
     steps:
     - uses: actions/checkout@v5
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
       with:
-        python-version: ${{ matrix.python-version }}
-    - name: Wait for Typesense
-      shell: bash
-      run: |
-        for attempt in {1..30}; do
-          if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8108/health; then
-            exit 0
-          fi
-          sleep 2
-        done
-        echo "Typesense did not become ready after 30 attempts"
-        docker logs "${{ job.services.typesense.id }}" --tail 50 || true
-        exit 1
-    - name: Build NeoDB owner-test image
-      shell: bash
-      run: |
-        source_sha="$(git rev-parse HEAD)"
-        source_tree="$(git rev-parse 'HEAD^{tree}')"
-        docker build \
-          --target owner-tests \
-          --build-arg dev=1 \
-          --build-arg buildver="${source_sha}" \
-          --build-arg sourcetree="${source_tree}" \
-          --tag "neodb-owner-tests:${source_sha}" .
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
     - name: Run NeoDB owner tests
-      shell: bash
+      shell: pwsh
       run: |
-        source_sha="$(git rev-parse HEAD)"
-        container_name="neodb-owner-tests-${GITHUB_RUN_ID}"
-        set +e
-        docker run --name "${container_name}" --network host \
-          --env NEODB_SECRET_KEY=test \
-          --env NEODB_SITE_NAME=test \
-          --env NEODB_SITE_DOMAIN=example.org \
-          --env NEODB_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb \
-          --env TAKAHE_DB_URL=postgres://testuser:testpass@127.0.0.1/test_neodb_takahe \
-          --env NEODB_REDIS_URL=redis://127.0.0.1:6379/0 \
-          --env NEODB_SEARCH_URL=typesense://testuser:testpass@127.0.0.1:8108/cat \
-          --env NEODB_OWNER_TEST_PROFILE=LOCAL_DOCKER_TYPESENSE \
-          "neodb-owner-tests:${source_sha}" /bin/sh /bin/neodb-owner-test
-        test_status=$?
-        docker cp "${container_name}:/neodb/coverage.xml" neodb/coverage.xml || true
-        docker rm "${container_name}" >/dev/null
-        exit "${test_status}"
+        $coveragePath = Join-Path (Get-Location) 'neodb/coverage.xml'
+        & ./misc/bin/neodb-owner-test.ps1 `
+          -Profile LOCAL_DOCKER_TYPESENSE `
+          -CoveragePath $coveragePath
+        exit $LASTEXITCODE
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v6
       with:

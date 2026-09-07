@@ -3,32 +3,156 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("LOCAL_DOCKER_TYPESENSE", "REMOTE_TYPESENSE")]
     [string]$Profile,
-    [string]$ComposeProject = "neodb-owner-tests"
+    [string]$ComposeProject = "neodb-owner-tests",
+    [string]$CoveragePath
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$repoRoot = (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
+$composeFile = Join-Path $repoRoot "compose.yml"
+$isWindowsHost = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $runId = [Guid]::NewGuid().ToString("N")
 $runSuffix = $runId.Substring(0, 12)
 $composeProjectName = "$ComposeProject-$PID-$runSuffix"
+$ownerTestImage = "neodb-owner-tests:$composeProjectName"
 $collectionPrefix = "neodb_owner_${PID}_$runSuffix"
 $dataRoot = Join-Path ([IO.Path]::GetTempPath()) "neodb-owner-tests-$PID-$runId"
+$logPath = Join-Path ([IO.Path]::GetTempPath()) "$composeProjectName.log"
 $remoteEndpoint = $null
 $remoteApiKey = $null
 $searchUrl = $null
+$sourceSha = $null
+$sourceTree = $null
 $exitCode = 1
+$status = "BLOCKED"
+$admission = "BLOCKED"
+$testResult = "NOT_RUN"
+$cleanup = "NOT_REQUIRED"
+$failureStep = $null
+$failureExitCode = $null
+$failureReason = $null
+$cleanupRequired = $false
 $cleanupFailed = $false
+$cleanupFailureReason = $null
+$logLifecycle = "NOT_CREATED"
+$reportedLogPath = $null
+$composeProfile = $null
+$ownerTestService = $null
 
 $originalEnvironment = @{}
 foreach ($name in @(
         "NEODB_SEARCH_URL",
+        "NEODB_SECRET_KEY",
+        "NEODB_SITE_DOMAIN",
         "NEODB_DATA",
         "COMPOSE_DISABLE_ENV_FILE",
         "NEODB_OWNER_TEST_PROFILE",
         "NEODB_OWNER_TEST_SOURCE_SHA",
-        "NEODB_OWNER_TEST_SOURCE_TREE"
+        "NEODB_OWNER_TEST_SOURCE_TREE",
+        "NEODB_OWNER_TEST_IMAGE"
     )) {
     $originalEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
+
+function Get-OutputText {
+    param([object[]]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    return ([string]::Join([Environment]::NewLine, [string[]]$Value)).Trim()
+}
+
+function Get-GitValue {
+    param([string[]]$Arguments)
+
+    $value = & git @Arguments 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "git identity lookup failed"
+    }
+
+    return Get-OutputText $value
+}
+
+function Invoke-Compose {
+    param([string[]]$Arguments)
+
+    & docker compose "--project-name" $composeProjectName "--file" $composeFile @Arguments *>> $logPath
+    return [int]$LASTEXITCODE
+}
+
+function Test-RunImagePresent {
+    & docker image inspect $ownerTestImage *> $null
+    return [int]$LASTEXITCODE -eq 0
+}
+
+function Remove-RunImage {
+    & docker image rm --force $ownerTestImage *>> $logPath
+    return [int]$LASTEXITCODE
+}
+
+function Remove-RunDataRoot {
+    if (-not (Test-Path -LiteralPath $dataRoot)) {
+        return $true
+    }
+
+    try {
+        Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction Stop
+    } catch {
+        # Linux containers may leave root-owned files in the host bind mount.
+    }
+
+    if (Test-Path -LiteralPath $dataRoot) {
+        $dataParent = Split-Path -Parent -Path $dataRoot
+        $dataLeaf = Split-Path -Leaf -Path $dataRoot
+        if ([string]::IsNullOrWhiteSpace($dataParent) -or [string]::IsNullOrWhiteSpace($dataLeaf)) {
+            return $false
+        }
+        $cleanupImage = "postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310"
+        & docker run --rm `
+            --mount "type=bind,source=$dataParent,target=/neodb-owner-test-parent" `
+            --entrypoint /bin/sh `
+            $cleanupImage `
+            -c "rm -rf -- /neodb-owner-test-parent/$dataLeaf" *>> $logPath
+        if ([int]$LASTEXITCODE -ne 0) {
+            return $false
+        }
+
+        Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    return -not (Test-Path -LiteralPath $dataRoot)
+}
+
+function Test-RunResourcesAbsent {
+    $containers = & docker container ls --all --filter "label=com.docker.compose.project=$composeProjectName" --format "{{.ID}}" 2>> $logPath
+    $containersCode = [int]$LASTEXITCODE
+    $networks = & docker network ls --filter "label=com.docker.compose.project=$composeProjectName" --format "{{.Name}}" 2>> $logPath
+    $networksCode = [int]$LASTEXITCODE
+    $volumes = & docker volume ls --filter "label=com.docker.compose.project=$composeProjectName" --format "{{.Name}}" 2>> $logPath
+    $volumesCode = [int]$LASTEXITCODE
+
+    return $containersCode -eq 0 -and $networksCode -eq 0 -and $volumesCode -eq 0 -and
+        [string]::IsNullOrWhiteSpace((Get-OutputText $containers)) -and
+        [string]::IsNullOrWhiteSpace((Get-OutputText $networks)) -and
+        [string]::IsNullOrWhiteSpace((Get-OutputText $volumes))
+}
+
+function Copy-CoverageArtifact {
+    if ([string]::IsNullOrWhiteSpace($CoveragePath)) {
+        return $true
+    }
+
+    $coverageDirectory = Split-Path -Parent $CoveragePath
+    if ($coverageDirectory) {
+        New-Item -ItemType Directory -Path $coverageDirectory -Force | Out-Null
+    }
+
+    & docker compose "--project-name" $composeProjectName "--file" $composeFile cp `
+        "$ownerTestService`:/neodb/coverage.xml" $CoveragePath *>> $logPath
+    return [int]$LASTEXITCODE -eq 0
 }
 
 function Restore-ProcessEnvironment {
@@ -114,11 +238,39 @@ function Remove-RemoteOwnerTestCollections {
 }
 
 try {
+    $dirty = Get-GitValue @("-C", $repoRoot, "status", "--porcelain", "--untracked-files=all")
+    if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+        $failureStep = "source-preflight"
+        $failureReason = "working-tree-not-clean"
+        throw "working tree is not clean"
+    }
+
+    $sourceSha = Get-GitValue @("-C", $repoRoot, "rev-parse", "HEAD")
+    $sourceTree = Get-GitValue @("-C", $repoRoot, "rev-parse", "HEAD^{tree}")
+
+    if ($isWindowsHost -and $Profile -eq "LOCAL_DOCKER_TYPESENSE") {
+        $failureStep = "profile-preflight"
+        $failureExitCode = 2
+        $failureReason = "LOCAL_DOCKER_TYPESENSE-not-admitted-on-Windows"
+        $testResult = "NOT_RUN"
+        throw "LOCAL_DOCKER_TYPESENSE is not admitted on the current Windows target"
+    }
+
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        $failureStep = "docker-preflight"
+        $failureReason = "docker-not-found"
+        throw "docker command not found"
+    }
+
     $env:NEODB_OWNER_TEST_PROFILE = $Profile
+    $env:NEODB_SECRET_KEY = "test"
+    $env:NEODB_SITE_DOMAIN = "example.org"
     $env:NEODB_DATA = $dataRoot
     $env:COMPOSE_DISABLE_ENV_FILE = "1"
-    $env:NEODB_OWNER_TEST_SOURCE_SHA = (& git -C $repoRoot rev-parse HEAD).Trim()
-    $env:NEODB_OWNER_TEST_SOURCE_TREE = (& git -C $repoRoot rev-parse "HEAD^{tree}").Trim()
+    $env:NEODB_OWNER_TEST_SOURCE_SHA = $sourceSha
+    $env:NEODB_OWNER_TEST_SOURCE_TREE = $sourceTree
+    $env:NEODB_OWNER_TEST_IMAGE = $ownerTestImage
+    $cleanupRequired = $true
 
     if ($Profile -eq "LOCAL_DOCKER_TYPESENSE") {
         $composeProfile = "owner-tests-local"
@@ -160,59 +312,140 @@ try {
     }
 
     $env:NEODB_SEARCH_URL = $searchUrl
-    "OWNER_TESTS_PROFILE = $Profile"
-    "TYPESENSE_VERSION = 30.1"
-    "TYPESENSE_ENDPOINT = $safeEndpoint"
-    "TYPESENSE_COLLECTION_NAMESPACE = RUN_UNIQUE"
-    "OWNER_TEST_PROJECT = RUN_UNIQUE"
-    "APP_PERSISTENT_STATE = NOT_ATTACHED"
-    "TYPESENSE_SECRET_SOURCE = $secretSource"
-    "SECRET_VALUE_RETAINED_IN_REPORT = NO"
-
-    Push-Location $repoRoot
-    try {
-        $composeArguments = @(
-            "compose",
-            "-p", $composeProjectName,
-            "--profile", $composeProfile,
-            "up",
-            "--build",
-            "--abort-on-container-exit",
-            "--exit-code-from", $ownerTestService,
-            $ownerTestService,
-            "neodb-db",
-            "takahe-db",
-            "redis"
-        )
-        & docker @composeArguments
-        $exitCode = $LASTEXITCODE
-    } finally {
-        Pop-Location
-    }
+    $failureStep = "compose-config"
+    $exitCode = Invoke-Compose @("--profile", $composeProfile, "config", "--quiet")
     if ($exitCode -ne 0) {
-        exit $exitCode
+        $failureExitCode = $exitCode
+        $failureReason = "compose-config-failed"
+        throw "docker compose config failed"
+    }
+
+    $failureStep = "owner-test-build"
+    $exitCode = Invoke-Compose @("--profile", $composeProfile, "build", $ownerTestService)
+    if ($exitCode -ne 0) {
+        $failureExitCode = $exitCode
+        $failureReason = "owner-test-image-build-failed"
+        throw "owner-test image build failed"
+    }
+
+    $admission = "PASS"
+    $failureStep = "owner-tests"
+    $exitCode = Invoke-Compose @(
+        "--profile", $composeProfile,
+        "up",
+        "--abort-on-container-exit",
+        "--exit-code-from", $ownerTestService,
+        $ownerTestService,
+        "neodb-db",
+        "takahe-db",
+        "redis"
+    )
+    if ($exitCode -ne 0) {
+        $failureExitCode = $exitCode
+        $testResult = "FAIL"
+        $failureReason = "owner-test-command-failed"
+        throw "owner-test command failed"
+    }
+
+    if (-not (Copy-CoverageArtifact)) {
+        $failureStep = "coverage-copy"
+        $failureReason = "coverage-artifact-copy-failed"
+        throw "coverage artifact copy failed"
+    }
+
+    $testResult = "PASS"
+    $status = "PASS"
+    $failureStep = $null
+} catch {
+    if (-not $failureReason) {
+        $failureReason = "owner-test-entrypoint-failed"
     }
 } finally {
-    Remove-RemoteOwnerTestCollections
-    Push-Location $repoRoot
     try {
-        & docker compose -p $composeProjectName down --volumes --remove-orphans | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            $script:cleanupFailed = $true
-            Write-Error "OWNER_TEST_DOCKER_CLEANUP = BLOCKED" -ErrorAction Continue
+        Remove-RemoteOwnerTestCollections
+        if ($cleanupRequired) {
+            $downCode = Invoke-Compose @("--profile", $composeProfile, "down", "--volumes", "--remove-orphans")
+            $removeImageCode = Remove-RunImage
+            $imageRemains = Test-RunImagePresent
+            $resourcesRemain = -not (Test-RunResourcesAbsent)
+            $dataRemains = -not (Remove-RunDataRoot)
+            if ($downCode -eq 0 -and $removeImageCode -eq 0 -and -not $imageRemains -and -not $resourcesRemain -and -not $dataRemains -and -not $cleanupFailed) {
+                $cleanup = "PASS"
+            } else {
+                $cleanup = "BLOCKED"
+                $cleanupFailed = $true
+                if ($downCode -ne 0) {
+                    $cleanupFailureReason = "compose-down-failed"
+                } elseif ($removeImageCode -ne 0) {
+                    $cleanupFailureReason = "owner-test-image-remove-failed"
+                } elseif ($imageRemains) {
+                    $cleanupFailureReason = "owner-test-image-remains"
+                } elseif ($resourcesRemain) {
+                    $cleanupFailureReason = "compose-resources-remain"
+                } elseif ($dataRemains) {
+                    $cleanupFailureReason = "disposable-data-remains"
+                } else {
+                    $cleanupFailureReason = "remote-collection-cleanup-failed"
+                }
+            }
         }
+    } catch {
+        $cleanup = "BLOCKED"
+        $cleanupFailed = $true
     } finally {
-        Pop-Location
+        Restore-ProcessEnvironment
     }
-    if (Test-Path -LiteralPath $dataRoot) {
-        Remove-Item -LiteralPath $dataRoot -Recurse -Force
-    }
-    Restore-ProcessEnvironment
-    $remoteEndpoint = $null
-    $remoteApiKey = $null
-    $searchUrl = $null
 }
 
-if ($cleanupFailed -and $exitCode -eq 0) {
-    exit 1
+if ($cleanupFailed -and $status -eq "PASS") {
+    $status = "BLOCKED"
+    $failureStep = "cleanup"
+    $failureExitCode = 1
+    $failureReason = $cleanupFailureReason ?? "disposable-project-cleanup-failed"
 }
+
+if ($status -eq "PASS") {
+    if (Test-Path -LiteralPath $logPath) {
+        Remove-Item -LiteralPath $logPath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $logPath) {
+        $status = "BLOCKED"
+        $cleanup = "BLOCKED"
+        $failureStep = "log-cleanup"
+        $failureReason = "run-log-delete-failed"
+        $logLifecycle = "BLOCKED_DELETE_FAILED"
+        $reportedLogPath = $logPath
+    } else {
+        $logLifecycle = "DELETED_ON_PASS"
+    }
+} elseif (Test-Path -LiteralPath $logPath) {
+    $logLifecycle = "RETAINED_FAILURE_DIAGNOSTIC"
+    $reportedLogPath = $logPath
+}
+
+$result = [ordered]@{
+    status = $status
+    evidenceClass = "OWNER TESTS"
+    admission = $admission
+    testResult = $testResult
+    sourceSha = $sourceSha
+    sourceTree = $sourceTree
+    ownerTestsProfile = $Profile
+    typesenseVersion = "30.1"
+    project = $composeProjectName
+    ownerTestImage = $ownerTestImage
+    cleanup = $cleanup
+    logLifecycle = $logLifecycle
+    logPath = $reportedLogPath
+    failureStep = $failureStep
+    failureExitCode = $failureExitCode
+    failureReason = $failureReason
+}
+
+Write-Output ($result | ConvertTo-Json -Compress)
+
+if ($status -eq "PASS") {
+    exit 0
+}
+
+exit 1
