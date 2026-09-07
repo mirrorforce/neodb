@@ -38,18 +38,18 @@ function Get-TypesenseEndpointUri {
         throw "NEODB_TYPESENSE_ENDPOINT must be set for REMOTE_TYPESENSE"
     }
 
-    $endpointUri = if ($Endpoint -match "^https?://") {
-        [Uri]$Endpoint
-    } else {
-        [Uri]("http://$Endpoint")
+    if ($Endpoint -match "^[a-z][a-z0-9+.-]*://") {
+        throw "NEODB_TYPESENSE_ENDPOINT must be a remote host or host:port without a URL scheme"
     }
-    if ($endpointUri.Scheme -notin @("http", "https") -or
+
+    $endpointUri = [Uri]("http://$Endpoint")
+    if ($endpointUri.Scheme -ne "http" -or
         [string]::IsNullOrWhiteSpace($endpointUri.Host) -or
         $endpointUri.UserInfo -or
         ($endpointUri.AbsolutePath -notin @("", "/")) -or
         $endpointUri.Query -or
         $endpointUri.Fragment) {
-        throw "NEODB_TYPESENSE_ENDPOINT must be a host, host:port, or an HTTP(S) endpoint without credentials or a path"
+        throw "NEODB_TYPESENSE_ENDPOINT must be a remote host or host:port without credentials or a path"
     }
     if (-not $endpointUri.IsDefaultPort -and ($endpointUri.Port -lt 1 -or $endpointUri.Port -gt 65535)) {
         throw "NEODB_TYPESENSE_ENDPOINT has an invalid port"

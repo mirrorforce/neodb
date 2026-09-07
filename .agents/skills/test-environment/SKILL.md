@@ -106,8 +106,9 @@ $env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1 -Profile REMOTE_TYPESENSE
 ```
 
-The endpoint may be a host, host:port, or HTTP(S) endpoint; an omitted port
-uses 8108. The endpoint must not contain credentials or a path. The remote key
+The endpoint must be a remote host or host:port only; do not include `http://`,
+`https://`, credentials, or a path. An omitted port uses 8108. NeoDB's current
+Typesense client uses HTTP for the resulting node connection. The remote key
 is read only from the current process environment. A local `.env` used by the
 workstation to populate these values remains machine-local and is already
 ignored by the repository; it must never be committed.
