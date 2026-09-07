@@ -23,6 +23,11 @@ jobs:
     - uses: actions/checkout@v5
       with:
         ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    - name: Run owner-test wrapper contract tests
+      shell: pwsh
+      run: |
+        & ./misc/bin/neodb-owner-test.contract.tests.ps1
+        exit $LASTEXITCODE
     - name: Run NeoDB owner tests
       shell: pwsh
       run: |

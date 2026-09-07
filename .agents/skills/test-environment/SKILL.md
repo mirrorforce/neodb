@@ -16,27 +16,26 @@ legitimate only when the record says `ENVIRONMENT_ADMISSION = PASS`. Missing,
 contradictory, substituted, or unproven prerequisites produce `BLOCKED`; do
 not run the dependent command merely to rediscover a known mismatch.
 
-## Current VinylHub OWNER TESTS runner/profile matrix
+## Current VinylHub OWNER TESTS placement contract
 
-The accepted profile is capability- and runner-specific. These profiles are
-not interchangeable and are never automatic fallbacks:
+The caller explicitly selects the Typesense placement. Placement is not derived
+from the host OS, CI runner, service availability, closed Issues, M0 notes, or
+historical failures. There is no automatic fallback:
 
 ```text
-CURRENT TARGET WINDOWS WORKSTATION
-  required profile = REMOTE_TYPESENSE
-  LOCAL_DOCKER_TYPESENSE = BLOCKED before Docker/Typesense startup
-  missing endpoint/key = ENVIRONMENT_ADMISSION BLOCKED / OWNER TESTS NOT_RUN
-  target REMOTE evidence = only with explicit private process inputs
-
-GITHUB ACTIONS UBUNTU RUNNER
-  allowed profile = LOCAL_DOCKER_TYPESENSE
-  purpose = disposable repository CI OWNER TESTS only
-  CI local PASS = not target-workstation REMOTE evidence
+OWNER_TESTS_PROFILE = explicit caller selection
+LOCAL_DOCKER_TYPESENSE
+  -> owner-test disposable local Typesense container
+REMOTE_TYPESENSE
+  -> caller-provided remote Typesense service/credential
+AUTOMATIC_FALLBACK = NO
+OS_DERIVED_PROFILE = NO
 ```
 
-The current Windows target must not retry the known-incompatible local
-Typesense 30.1 path (exit 139). No profile selection or fallback may be
-inferred from service availability.
+Typesense is a rebuildable, non-authoritative search projection. It is not
+backup, restore, continuation, or authoritative Product state. OWNER TESTS and
+VINYLHUB DEVELOPMENT retain separate evidence boundaries, but OWNER TESTS does
+not own a second Typesense machine-configuration authority.
 
 ## Current canonical OWNER TESTS profiles
 
@@ -51,9 +50,8 @@ SOURCE
   exact current uv dependency lock
 
 HOST
-  Windows orchestration only: editor, Git, Docker, process-environment input,
-  and evidence collection
-  NeoDB tests do not run against a Windows source checkout
+  orchestration only: editor, Git, Docker, process-environment input, and
+  evidence collection
 
 TEST RUNNER
   Linux Docker container built from the repository Dockerfile
@@ -85,8 +83,9 @@ OWNER TESTS / LOCAL_DOCKER_TYPESENSE
 
 OWNER TESTS / REMOTE_TYPESENSE
   remote test/development Typesense service, exact version 30.1
-  explicit endpoint and scoped test credential from process environment
-  test-only/disposable data and credential isolation must be proven
+  caller-provided endpoint and credential from process environment
+  no separate OWNER TESTS credential authority
+  run-unique collection namespace only for execution/concurrency isolation
 ```
 
 ## Host runtime precision
@@ -123,16 +122,16 @@ For the remote profile, provide endpoint and credential directly in the
 process environment, then select the profile explicitly:
 
 ```powershell
-$env:NEODB_TYPESENSE_ENDPOINT = '<machine-local endpoint>'
-$env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
+$env:NEODB_TYPESENSE_ENDPOINT = '<caller-provided remote endpoint>'
+$env:NEODB_TYPESENSE_API_KEY = '<caller-provided remote key>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile REMOTE_TYPESENSE
 ```
 
-On the current Windows target, selecting `LOCAL_DOCKER_TYPESENSE` fails closed
-at profile preflight with `status=BLOCKED`, `testResult=NOT_RUN`, before any
-Docker or Typesense startup. The wrapper does not select REMOTE automatically.
-GitHub Actions Ubuntu invokes `LOCAL_DOCKER_TYPESENSE` as disposable CI only;
-that result must not be promoted to target-workstation REMOTE evidence.
+The wrapper does not select or substitute a profile automatically. A missing
+remote endpoint or key blocks `REMOTE_TYPESENSE` before OWNER TESTS; it does
+not fall back to LOCAL. A CI run that explicitly selects LOCAL remains OWNER
+TESTS evidence for that LOCAL placement and is not promoted to REMOTE or to
+VINYLHUB DEVELOPMENT evidence.
 
 The endpoint must be a remote host or host:port only; do not include `http://`,
 `https://`, credentials, or a path. An omitted port uses 8108. NeoDB's current
@@ -151,7 +150,9 @@ version 30.1 before starting Docker. It allocates a run-unique collection
 namespace and fails closed if that namespace is already present. The owner
 test settings derive the namespace from the wrapper's process-local search URL
 and map `catalog`, `people`, and `journal` to it (plus the existing xdist worker
-suffix), so the remote run never uses the persistent `vinylhub-dev` collections.
+suffix), so the remote run never uses the normal development collections. This
+collection prefix is execution-only concurrency isolation, not durable or
+persistent test state.
 Cleanup lists collections and deletes only names
 matching the exact run-owned namespace; cleanup residue is reported as a
 failure rather than broadening deletion authority. It then constructs
@@ -165,7 +166,9 @@ task-owned disposable data; it does not read remote credentials.
 
 The profile-specific Compose services are `neodb-owner-tests-local` and
 `neodb-owner-tests` under `owner-tests-local` and `owner-tests-remote`
-profiles. The PowerShell wrapper is the only supported host-side entrypoint.
+profiles. These services represent OWNER TESTS container topology, not a second
+Typesense machine configuration or durable/persistent test-state authority. The
+PowerShell wrapper is the only supported host-side entrypoint.
 It cleans the Compose project with disposable volumes and removes its
 task-owned temporary data path even after failure.
 
@@ -251,7 +254,7 @@ TYPESENSE_VERSION = 30.1
 TYPESENSE_ENDPOINT_REACHABILITY
 TYPESENSE_HEALTH
 TYPESENSE_AUTH
-TYPESENSE_DATA_ISOLATION = PASS / BLOCKED
+TYPESENSE_COLLECTION_NAMESPACE_ISOLATION = PASS / BLOCKED
 TYPESENSE_SECRET_SOURCE = NONE / PROCESS_ENVIRONMENT
 SECRET_VALUE_RETAINED_IN_REPORT = NO
 ```
@@ -282,11 +285,11 @@ VINYLHUB DEVELOPMENT.
    disposable data, health, authenticated access, and version from inside the
    test network.
 7. For REMOTE_TYPESENSE, prove endpoint reachability, exact version 30.1,
-   `/health`, authenticated collection access, and test-only/disposable data
-   isolation. Prove the run-unique collection namespace is absent before the
-   run and that cleanup targets only that namespace. Obtain the scoped key only
-   from process-local machine input; keep
-   it in process scope, expose it to NeoDB through `NEODB_SEARCH_URL`, redact
+   `/health`, and authenticated collection access. Prove the run-unique
+   collection namespace is absent before the run and that cleanup targets only
+   that namespace. Use the endpoint and credential supplied by the caller in
+   process environment; keep them in process scope, expose the search
+   connection to NeoDB through `NEODB_SEARCH_URL`, redact
    the URL from output, and clear process state after the run.
 8. Record `CWD` and both canonical commands before execution. The full pytest
    command is the OWNER TESTS claim; a focused subset cannot replace it.
@@ -304,12 +307,10 @@ failures.
 ## Hard vetoes
 
 ```text
-local Windows Typesense startup used for OWNER TESTS
 implicit profile selection or automatic profile fallback
 LOCAL_DOCKER_TYPESENSE using a remote credential
 REMOTE_TYPESENSE silently starting or substituting local Typesense
 Typesense version changed from 30.1 without current Human-approved requalification
-bootstrap/admin Typesense key used as routine owner-test credential
 dummy or intentionally unreachable required endpoint
 native Compose defaults treated as OWNER TESTS authority merely because they exist
 focused subset represented as canonical full OWNER TESTS

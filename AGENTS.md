@@ -62,16 +62,16 @@ tasks, closed Issues, historical branches, or source archaeology.
 - OWNER TESTS and OWNER RUNTIME claims require the current `test-environment`
   admission before the first runtime-dependent command. A blocked admission is
   recorded as `BLOCKED`/`NOT_RUN`; required services are not silently substituted.
-- NeoDB's current VinylHub machine-local canonical OWNER TESTS profile is defined
-  inside `.agents/skills/test-environment/SKILL.md`. It is an explicit proven
-  profile, not something to reconstruct from `compose.yml`, old M0 notes, or
-  previous failure reports. In particular, native Compose search defaults are
-  not automatically the VinylHub OWNER TESTS search authority.
+- The owner wrapper still owns OWNER TESTS container/database lifecycle, while
+  Typesense placement is supplied explicitly by the caller as
+  `LOCAL_DOCKER_TYPESENSE` or `REMOTE_TYPESENSE`. Placement must not be derived
+  from OS, CI, closed Issues, M0 notes, or historical failures.
 - VINYLHUB DEVELOPMENT is owned and admitted by
   `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
-  requirements but does not admit that cross-repository composition. An
-  app-owned VINYLHUB DEVELOPMENT topology must not
-  silently overwrite the NeoDB OWNER TESTS profile.
+  requirements but does not admit that cross-repository composition. App
+  machine configuration is the normal authority; the NeoDB wrapper accepts
+  only explicit arguments and process-environment inputs and does not read an
+  App `.env`.
 - The canonical NeoDB owner-test primitive requires a clean exact checkout,
   uses run-unique disposable project/image/state, emits the shared OWNER TESTS
   JSON result envelope, restores caller process environment, and is the only
