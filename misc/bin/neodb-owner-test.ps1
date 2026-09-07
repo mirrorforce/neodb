@@ -33,6 +33,7 @@ $failureExitCode = $null
 $failureReason = $null
 $cleanupRequired = $false
 $cleanupFailed = $false
+$cleanupFailureReason = $null
 $logLifecycle = "NOT_CREATED"
 $reportedLogPath = $null
 $composeProfile = $null
@@ -359,6 +360,19 @@ try {
             } else {
                 $cleanup = "BLOCKED"
                 $cleanupFailed = $true
+                if ($downCode -ne 0) {
+                    $cleanupFailureReason = "compose-down-failed"
+                } elseif ($removeImageCode -ne 0) {
+                    $cleanupFailureReason = "owner-test-image-remove-failed"
+                } elseif ($imageRemains) {
+                    $cleanupFailureReason = "owner-test-image-remains"
+                } elseif ($resourcesRemain) {
+                    $cleanupFailureReason = "compose-resources-remain"
+                } elseif ($dataRemains) {
+                    $cleanupFailureReason = "disposable-data-remains"
+                } else {
+                    $cleanupFailureReason = "remote-collection-cleanup-failed"
+                }
             }
         }
     } catch {
@@ -373,7 +387,7 @@ if ($cleanupFailed -and $status -eq "PASS") {
     $status = "BLOCKED"
     $failureStep = "cleanup"
     $failureExitCode = 1
-    $failureReason = "disposable-project-cleanup-failed"
+    $failureReason = $cleanupFailureReason ?? "disposable-project-cleanup-failed"
 }
 
 if ($status -eq "PASS") {
