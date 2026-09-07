@@ -101,7 +101,9 @@ function Get-EnvironmentSnapshot {
             "NEODB_OWNER_TEST_SOURCE_TREE",
             "NEODB_OWNER_TEST_IMAGE",
             "NEODB_TYPESENSE_ENDPOINT",
-            "NEODB_TYPESENSE_API_KEY"
+            "NEODB_TYPESENSE_API_KEY",
+            "OS",
+            "RUNNER_OS"
         )) {
         $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     }
@@ -109,11 +111,14 @@ function Get-EnvironmentSnapshot {
 }
 
 function Assert-EnvironmentSnapshot {
-    param([hashtable]$Expected)
+    param(
+        [hashtable]$Expected,
+        [string]$Context = "wrapper invocation"
+    )
 
     $actual = Get-EnvironmentSnapshot
     foreach ($name in $Expected.Keys) {
-        Assert-Contract ($actual[$name] -eq $Expected[$name]) "process environment was not restored for $name"
+        Assert-Contract ($actual[$name] -eq $Expected[$name]) "process environment was not restored for $name ($Context)"
     }
 }
 
@@ -146,6 +151,19 @@ function Set-EnvironmentValue {
     [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
 }
 
+function Restore-EnvironmentSnapshot {
+    param([hashtable]$Snapshot)
+
+    foreach ($name in $Snapshot.Keys) {
+        $value = $Snapshot[$name]
+        if ($null -eq $value) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            Set-EnvironmentValue -Name $name -Value $value
+        }
+    }
+}
+
 function Invoke-WrapperContract {
     param([ValidateSet("LOCAL_DOCKER_TYPESENSE", "REMOTE_TYPESENSE")][string]$Profile)
     @(. $wrapperPath -Profile $Profile -ComposeProject "contract-test")
@@ -153,6 +171,10 @@ function Invoke-WrapperContract {
 
 Assert-Contract ((Get-Command docker).CommandType -eq "Function") "Docker boundary was not replaced by the test double"
 Assert-Contract ((Get-Command git).CommandType -eq "Function") "Git boundary was not replaced by the test double"
+$wrapperSource = Get-Content -Raw $wrapperPath
+foreach ($forbiddenToken in @('$IsWindows', 'OSVersion', 'RuntimeInformation', 'RUNNER_OS', 'GITHUB_ACTIONS', 'CI')) {
+    Assert-Contract (-not $wrapperSource.Contains($forbiddenToken)) "wrapper contains profile-selection token $forbiddenToken"
+}
 
 foreach ($name in @(
         "NEODB_SEARCH_URL",
@@ -172,7 +194,13 @@ Set-EnvironmentValue "NEODB_TYPESENSE_API_KEY" "remote-contract-secret"
 $localEnvironment = Get-EnvironmentSnapshot
 $script:MockDockerCalls.Clear()
 $script:MockTypesenseRequests.Clear()
-$localResult = (Invoke-WrapperContract "LOCAL_DOCKER_TYPESENSE" | ConvertFrom-Json)
+Set-EnvironmentValue "OS" "Windows_NT"
+Set-EnvironmentValue "RUNNER_OS" "Windows"
+try {
+    $localResult = (Invoke-WrapperContract "LOCAL_DOCKER_TYPESENSE" | ConvertFrom-Json)
+} finally {
+    Restore-EnvironmentSnapshot $localEnvironment
+}
 
 Assert-OwnerTestEnvelope $localResult
 Assert-Contract ($localResult.status -eq "PASS") "LOCAL profile did not reach the mocked Docker boundary"
@@ -181,7 +209,7 @@ Assert-Contract ($localResult.cleanup -eq "PASS") "LOCAL profile did not report 
 Assert-Contract ($script:MockDockerCalls -contains "RUN_UNIQUE_SEARCH_NAMESPACE=PASS") "LOCAL profile did not use a run-unique namespace"
 Assert-Contract (-not ($script:MockDockerCalls -contains "REMOTE_SECRET_LEAK=FAIL")) "LOCAL profile consumed remote credentials"
 Assert-Contract ($script:MockTypesenseRequests.Count -eq 0) "LOCAL profile performed remote Typesense I/O"
-Assert-EnvironmentSnapshot $localEnvironment
+Assert-EnvironmentSnapshot $localEnvironment "LOCAL Windows-like invocation"
 
 $remoteEnvironment = Get-EnvironmentSnapshot
 Set-EnvironmentValue "NEODB_TYPESENSE_ENDPOINT" $null
@@ -195,7 +223,7 @@ Assert-OwnerTestEnvelope $missingResult
 Assert-Contract ($missingResult.status -eq "BLOCKED") "REMOTE missing input was not blocked"
 Assert-Contract ($missingResult.testResult -eq "NOT_RUN") "REMOTE missing input unexpectedly ran tests"
 Assert-Contract (-not ($script:MockDockerCalls | Where-Object { $_ -match "compose.*(config|build|up)" })) "REMOTE missing input fell back to LOCAL/startup"
-Assert-EnvironmentSnapshot $missingEnvironment
+Assert-EnvironmentSnapshot $missingEnvironment "REMOTE missing-input invocation"
 
 Set-EnvironmentValue "NEODB_TYPESENSE_ENDPOINT" "remote-contract.example:8108"
 Set-EnvironmentValue "NEODB_TYPESENSE_API_KEY" "remote-contract-secret"
@@ -212,6 +240,6 @@ Assert-Contract ($remoteResult.cleanup -eq "PASS") "REMOTE profile did not repor
 Assert-Contract ($script:DeletedRemoteCollections.Count -eq 2) "REMOTE cleanup did not target exactly the run-owned collections"
 Assert-Contract (@($script:DeletedRemoteCollections | Where-Object { $_ -match "^neodb_owner_\d+_[0-9a-f]{12}-(catalog|people-gw1)$" }).Count -eq 2) "REMOTE cleanup used a non-run-owned collection name"
 Assert-Contract (@($script:DeletedRemoteCollections | Where-Object { $_ -match "vinylhub-dev|other-run" }).Count -eq 0) "REMOTE cleanup broadened its deletion authority"
-Assert-EnvironmentSnapshot $remoteEnvironment
+Assert-EnvironmentSnapshot $remoteEnvironment "REMOTE caller-input invocation"
 
 Write-Output "neodb-owner-test contract tests: PASS"

@@ -83,8 +83,9 @@ OWNER TESTS / LOCAL_DOCKER_TYPESENSE
 
 OWNER TESTS / REMOTE_TYPESENSE
   remote test/development Typesense service, exact version 30.1
-  explicit endpoint and scoped test credential from process environment
-  test-only/disposable data and credential isolation must be proven
+  caller-provided endpoint and credential from process environment
+  no separate OWNER TESTS credential authority
+  run-unique collection namespace only for execution/concurrency isolation
 ```
 
 ## Host runtime precision
@@ -121,8 +122,8 @@ For the remote profile, provide endpoint and credential directly in the
 process environment, then select the profile explicitly:
 
 ```powershell
-$env:NEODB_TYPESENSE_ENDPOINT = '<machine-local endpoint>'
-$env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
+$env:NEODB_TYPESENSE_ENDPOINT = '<caller-provided remote endpoint>'
+$env:NEODB_TYPESENSE_API_KEY = '<caller-provided remote key>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile REMOTE_TYPESENSE
 ```
 
@@ -253,7 +254,7 @@ TYPESENSE_VERSION = 30.1
 TYPESENSE_ENDPOINT_REACHABILITY
 TYPESENSE_HEALTH
 TYPESENSE_AUTH
-TYPESENSE_DATA_ISOLATION = PASS / BLOCKED
+TYPESENSE_COLLECTION_NAMESPACE_ISOLATION = PASS / BLOCKED
 TYPESENSE_SECRET_SOURCE = NONE / PROCESS_ENVIRONMENT
 SECRET_VALUE_RETAINED_IN_REPORT = NO
 ```
@@ -284,11 +285,11 @@ VINYLHUB DEVELOPMENT.
    disposable data, health, authenticated access, and version from inside the
    test network.
 7. For REMOTE_TYPESENSE, prove endpoint reachability, exact version 30.1,
-   `/health`, authenticated collection access, and test-only/disposable data
-   isolation. Prove the run-unique collection namespace is absent before the
-   run and that cleanup targets only that namespace. Obtain the scoped key only
-   from process-local machine input; keep
-   it in process scope, expose it to NeoDB through `NEODB_SEARCH_URL`, redact
+   `/health`, and authenticated collection access. Prove the run-unique
+   collection namespace is absent before the run and that cleanup targets only
+   that namespace. Use the endpoint and credential supplied by the caller in
+   process environment; keep them in process scope, expose the search
+   connection to NeoDB through `NEODB_SEARCH_URL`, redact
    the URL from output, and clear process state after the run.
 8. Record `CWD` and both canonical commands before execution. The full pytest
    command is the OWNER TESTS claim; a focused subset cannot replace it.
@@ -310,7 +311,6 @@ implicit profile selection or automatic profile fallback
 LOCAL_DOCKER_TYPESENSE using a remote credential
 REMOTE_TYPESENSE silently starting or substituting local Typesense
 Typesense version changed from 30.1 without current Human-approved requalification
-bootstrap/admin Typesense key used as routine owner-test credential
 dummy or intentionally unreachable required endpoint
 native Compose defaults treated as OWNER TESTS authority merely because they exist
 focused subset represented as canonical full OWNER TESTS
