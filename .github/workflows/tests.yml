@@ -118,7 +118,7 @@ jobs:
         docker rm "${container_name}" >/dev/null
         exit "${test_status}"
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       with:
         files: neodb/coverage.xml
         flags: neodb
@@ -179,7 +179,7 @@ jobs:
       run: |
         uv run --project .. python -m pytest --cov=. --cov-report=term-missing --cov-report=xml
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       with:
         files: takahe/coverage.xml
         flags: takahe
