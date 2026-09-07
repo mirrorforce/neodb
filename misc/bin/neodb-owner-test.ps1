@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
 $composeFile = Join-Path $repoRoot "compose.yml"
+$isWindowsHost = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $runId = [Guid]::NewGuid().ToString("N")
 $runSuffix = $runId.Substring(0, 12)
 $composeProjectName = "$ComposeProject-$PID-$runSuffix"
@@ -246,6 +247,14 @@ try {
 
     $sourceSha = Get-GitValue @("-C", $repoRoot, "rev-parse", "HEAD")
     $sourceTree = Get-GitValue @("-C", $repoRoot, "rev-parse", "HEAD^{tree}")
+
+    if ($isWindowsHost -and $Profile -eq "LOCAL_DOCKER_TYPESENSE") {
+        $failureStep = "profile-preflight"
+        $failureExitCode = 2
+        $failureReason = "LOCAL_DOCKER_TYPESENSE-not-admitted-on-Windows"
+        $testResult = "NOT_RUN"
+        throw "LOCAL_DOCKER_TYPESENSE is not admitted on the current Windows target"
+    }
 
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         $failureStep = "docker-preflight"

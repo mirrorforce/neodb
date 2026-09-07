@@ -16,7 +16,29 @@ legitimate only when the record says `ENVIRONMENT_ADMISSION = PASS`. Missing,
 contradictory, substituted, or unproven prerequisites produce `BLOCKED`; do
 not run the dependent command merely to rediscover a known mismatch.
 
-## Current VinylHub machine-local canonical OWNER TESTS profile
+## Current VinylHub OWNER TESTS runner/profile matrix
+
+The accepted profile is capability- and runner-specific. These profiles are
+not interchangeable and are never automatic fallbacks:
+
+```text
+CURRENT TARGET WINDOWS WORKSTATION
+  required profile = REMOTE_TYPESENSE
+  LOCAL_DOCKER_TYPESENSE = BLOCKED before Docker/Typesense startup
+  missing endpoint/key = ENVIRONMENT_ADMISSION BLOCKED / OWNER TESTS NOT_RUN
+  target REMOTE evidence = only with explicit private process inputs
+
+GITHUB ACTIONS UBUNTU RUNNER
+  allowed profile = LOCAL_DOCKER_TYPESENSE
+  purpose = disposable repository CI OWNER TESTS only
+  CI local PASS = not target-workstation REMOTE evidence
+```
+
+The current Windows target must not retry the known-incompatible local
+Typesense 30.1 path (exit 139). No profile selection or fallback may be
+inferred from service availability.
+
+## Current canonical OWNER TESTS profiles
 
 The current machine-local OWNER TESTS runner is a Linux Docker container built
 from the exact repository source. Search is capability-selected between the
@@ -105,6 +127,12 @@ $env:NEODB_TYPESENSE_ENDPOINT = '<machine-local endpoint>'
 $env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile REMOTE_TYPESENSE
 ```
+
+On the current Windows target, selecting `LOCAL_DOCKER_TYPESENSE` fails closed
+at profile preflight with `status=BLOCKED`, `testResult=NOT_RUN`, before any
+Docker or Typesense startup. The wrapper does not select REMOTE automatically.
+GitHub Actions Ubuntu invokes `LOCAL_DOCKER_TYPESENSE` as disposable CI only;
+that result must not be promoted to target-workstation REMOTE evidence.
 
 The endpoint must be a remote host or host:port only; do not include `http://`,
 `https://`, credentials, or a path. An omitted port uses 8108. NeoDB's current
