@@ -134,6 +134,9 @@ try {
         if ([string]::IsNullOrWhiteSpace($remoteApiKey)) {
             throw "NEODB_TYPESENSE_API_KEY must be set for REMOTE_TYPESENSE"
         }
+        if ($remoteApiKey -notmatch '^[A-Za-z0-9._~-]+$') {
+            throw "REMOTE_TYPESENSE_CREDENTIAL_FORMAT = BLOCKED"
+        }
 
         $typesenseHeaders = @{ "X-TYPESENSE-API-KEY" = $remoteApiKey }
         try {
@@ -151,8 +154,7 @@ try {
             throw "Remote Typesense health/authentication/version check failed"
         }
 
-        $escapedApiKey = [Uri]::EscapeDataString($remoteApiKey)
-        $searchUrl = "typesense://user:$escapedApiKey@$($remoteEndpoint.Authority)/$collectionPrefix"
+        $searchUrl = "typesense://user:$remoteApiKey@$($remoteEndpoint.Authority)/$collectionPrefix"
         $safeEndpoint = "CONFIGURED"
         $secretSource = "PROCESS_ENVIRONMENT"
     }

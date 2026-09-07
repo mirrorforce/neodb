@@ -184,7 +184,7 @@ services:
         buildver: ${NEODB_OWNER_TEST_SOURCE_SHA:-dev-unknown}
         sourcetree: ${NEODB_OWNER_TEST_SOURCE_TREE:-dev-unknown}
     image: ${NEODB_OWNER_TEST_IMAGE:-neodb/neodb:owner-tests}
-    command: ["/bin/sh", "/bin/neodb-t1"]
+    command: ["/bin/sh", "/bin/neodb-owner-test"]
     environment: &owner-tests-environment
       NEODB_SECRET_KEY: ${NEODB_SECRET_KEY:-test}
       NEODB_SITE_NAME: ${NEODB_SITE_NAME:-test}

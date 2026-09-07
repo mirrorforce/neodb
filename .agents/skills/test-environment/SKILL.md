@@ -39,7 +39,7 @@ TEST RUNNER
   Python 3.14.x in the image
   exact uv.lock and locked dev/test dependencies
   cwd = /neodb
-  entrypoint = /bin/neodb-t1
+  entrypoint = /bin/neodb-owner-test
 
 LOCAL DOCKER SERVICES
   Product PostgreSQL
@@ -90,11 +90,11 @@ may be recorded as orchestration evidence, but need not equal Docker uv 0.8.8.
 
 ## Profile selection and machine-local inputs
 
-The repository-owned host entrypoint is `misc/bin/neodb-t1.ps1`. It requires
+The repository-owned host entrypoint is `misc/bin/neodb-owner-test.ps1`. It requires
 one explicit profile:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1 -Profile LOCAL_DOCKER_TYPESENSE
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile LOCAL_DOCKER_TYPESENSE
 ```
 
 For the remote profile, provide endpoint and credential directly in the
@@ -103,13 +103,15 @@ process environment, then select the profile explicitly:
 ```powershell
 $env:NEODB_TYPESENSE_ENDPOINT = '<machine-local endpoint>'
 $env:NEODB_TYPESENSE_API_KEY = '<machine-local scoped owner-test key>'
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-t1.ps1 -Profile REMOTE_TYPESENSE
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\misc\bin\neodb-owner-test.ps1 -Profile REMOTE_TYPESENSE
 ```
 
 The endpoint must be a remote host or host:port only; do not include `http://`,
 `https://`, credentials, or a path. An omitted port uses 8108. NeoDB's current
 Typesense client uses HTTP for the resulting node connection. The remote key
-is read only from the current process environment. A local `.env` used by the
+is read only from the current process environment and must contain only
+URL-userinfo unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, `~`).
+Unsafe values fail closed before external preflight. A local `.env` used by the
 workstation to populate these values remains machine-local and is already
 ignored by the repository; it must never be committed.
 
@@ -139,7 +141,7 @@ task-owned temporary data path even after failure.
 ## Canonical OWNER TESTS commands
 
 The supported host command is the explicit profile command above. Inside the
-Linux test container, `/bin/neodb-t1` runs these commands in order:
+Linux test container, `/bin/neodb-owner-test` runs these commands in order:
 
 ```text
 uv run --project .. python manage.py compilemessages -l zh_Hans
@@ -151,7 +153,7 @@ coverage, change the canonical command, use a Windows source bind mount, or
 create a local/remote workaround to manufacture PASS. A focused subset may be
 diagnostic evidence but cannot replace canonical OWNER TESTS.
 
-This is OWNER TESTS. App-owned LOCAL INTEGRATION is a separate ownership
+This is OWNER TESTS. App-owned VINYLHUB DEVELOPMENT is a separate ownership
 boundary and may use a different exact service topology; its evidence must not
 silently replace OWNER TESTS evidence. OWNER TESTS evidence does not prove
 OWNER RUNTIME behavior.
@@ -164,7 +166,7 @@ credential-bearing URLs, or private key material.
 
 ```text
 ENVIRONMENT_ADMISSION = PASS / BLOCKED
-VALIDATION_CONTEXT = OWNER TESTS / OWNER RUNTIME / LOCAL INTEGRATION
+VALIDATION_CONTEXT = OWNER TESTS / OWNER RUNTIME / VINYLHUB DEVELOPMENT
 OWNER_TESTS_PROFILE = LOCAL_DOCKER_TYPESENSE / REMOTE_TYPESENSE
 RUNNER_PLATFORM
 RUNNER_IDENTITY
@@ -248,7 +250,7 @@ bootstrap/admin Typesense key used as routine owner-test credential
 dummy or intentionally unreachable required endpoint
 native Compose defaults treated as OWNER TESTS authority merely because they exist
 focused subset represented as canonical full OWNER TESTS
-OWNER TESTS evidence promoted to OWNER RUNTIME or LOCAL INTEGRATION
+OWNER TESTS evidence promoted to OWNER RUNTIME or VINYLHUB DEVELOPMENT
 secret value or full NEODB_SEARCH_URL retained in evidence
 ```
 

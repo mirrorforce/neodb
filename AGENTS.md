@@ -67,12 +67,13 @@ tasks, closed Issues, historical branches, or source archaeology.
   profile, not something to reconstruct from `compose.yml`, old M0 notes, or
   previous failure reports. In particular, native Compose search defaults are
   not automatically the VinylHub OWNER TESTS search authority.
-- LOCAL INTEGRATION is owned and admitted by `mirrorforce/vinyl-catalog-app`;
-  NeoDB supplies exact owner identities and requirements but does not admit that
-  cross-repository composition. An app-owned LOCAL INTEGRATION topology must not
+- VINYLHUB DEVELOPMENT is owned and admitted by
+  `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
+  requirements but does not admit that cross-repository composition. An
+  app-owned VINYLHUB_DEV topology must not
   silently overwrite the NeoDB OWNER TESTS profile.
 - OWNER TESTS evidence does not prove OWNER RUNTIME behavior, and OWNER RUNTIME
-  evidence does not prove LOCAL INTEGRATION behavior.
+  evidence does not prove VINYLHUB DEVELOPMENT behavior.
 - Preserve exact commands, outcomes, changed paths, non-scope, and bounded unknowns
   in acceptance evidence. Keep Skills, operations, and implemented behavior in
   their respective owners.

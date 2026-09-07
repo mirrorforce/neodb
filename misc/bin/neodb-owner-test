@@ -71,6 +71,10 @@ def check_typesense(search_url):
     if not api_key:
         fail("Typesense API credential is missing")
     if os.environ["NEODB_OWNER_TEST_PROFILE"] == "REMOTE_TYPESENSE" and not re.fullmatch(
+        r"[A-Za-z0-9._~-]+", api_key
+    ):
+        fail("REMOTE_TYPESENSE_CREDENTIAL_FORMAT = BLOCKED")
+    if os.environ["NEODB_OWNER_TEST_PROFILE"] == "REMOTE_TYPESENSE" and not re.fullmatch(
         r"neodb_owner_[0-9]+_[a-f0-9]{12}", collection_namespace
     ):
         fail("REMOTE_TYPESENSE collection namespace is not run-unique")

@@ -112,7 +112,7 @@ jobs:
           --env NEODB_REDIS_URL=redis://127.0.0.1:6379/0 \
           --env NEODB_SEARCH_URL=typesense://testuser:testpass@127.0.0.1:8108/cat \
           --env NEODB_OWNER_TEST_PROFILE=LOCAL_DOCKER_TYPESENSE \
-          "neodb-owner-tests:${source_sha}" /bin/sh /bin/neodb-t1
+          "neodb-owner-tests:${source_sha}" /bin/sh /bin/neodb-owner-test
         test_status=$?
         docker cp "${container_name}:/neodb/coverage.xml" neodb/coverage.xml || true
         docker rm "${container_name}" >/dev/null
