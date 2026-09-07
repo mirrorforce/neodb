@@ -114,13 +114,21 @@ workstation to populate these values remains machine-local and is already
 ignored by the repository; it must never be committed.
 
 The wrapper validates remote health, authenticated collection access, and
-version 30.1 before starting Docker. It then constructs `NEODB_SEARCH_URL`
-only in process memory. The test container independently validates Typesense
-health, authentication, and version 30.1 before running tests. The wrapper
-never prints the key or full credential-bearing URL and restores its process
-environment during cleanup. Local profile execution uses only the pinned local
-Typesense service and task-owned disposable data; it does not read remote
-credentials.
+version 30.1 before starting Docker. It allocates a run-unique collection
+namespace and fails closed if that namespace is already present. The owner
+test settings derive the namespace from the wrapper's process-local search URL
+and map `catalog`, `people`, and `journal` to it (plus the existing xdist worker
+suffix), so the remote run never uses the persistent `vinylhub-dev` collections.
+Cleanup lists collections and deletes only names
+matching the exact run-owned namespace; cleanup residue is reported as a
+failure rather than broadening deletion authority. It then constructs
+`NEODB_SEARCH_URL` only in process memory. The test container independently
+validates Typesense health, authentication, version 30.1, and the run-unique
+namespace before running tests. The wrapper never prints the key, hostname, or
+full credential-bearing URL, disables Compose automatic `.env` loading, and
+restores its process environment during cleanup. Local profile execution uses
+only the pinned local Typesense service, a run-unique Compose project, and
+task-owned disposable data; it does not read remote credentials.
 
 The profile-specific Compose services are `neodb-owner-tests-local` and
 `neodb-owner-tests` under `owner-tests-local` and `owner-tests-remote`
@@ -210,7 +218,9 @@ INTEGRATION.
    test network.
 7. For REMOTE_TYPESENSE, prove endpoint reachability, exact version 30.1,
    `/health`, authenticated collection access, and test-only/disposable data
-   isolation. Obtain the scoped key only from process-local machine input; keep
+   isolation. Prove the run-unique collection namespace is absent before the
+   run and that cleanup targets only that namespace. Obtain the scoped key only
+   from process-local machine input; keep
    it in process scope, expose it to NeoDB through `NEODB_SEARCH_URL`, redact
    the URL from output, and clear process state after the run.
 8. Record `CWD` and both canonical commands before execution. The full pytest

@@ -17,9 +17,20 @@ case "${NEODB_OWNER_TEST_PROFILE:-}" in
         ;;
 esac
 
+if [ "${NEODB_OWNER_TEST_PROFILE}" = "REMOTE_TYPESENSE" ]; then
+    case "${NEODB_SEARCH_URL}" in
+        typesense://*/*) ;;
+        *)
+            echo "REMOTE_TYPESENSE requires a run-unique Typesense collection namespace" >&2
+            exit 2
+            ;;
+    esac
+fi
+
 "$PYTHON" - <<'PY'
 import json
 import os
+import re
 import sys
 import time
 from urllib.error import HTTPError, URLError
@@ -43,7 +54,7 @@ def endpoint_from_search_url(search_url):
     host = parsed.hostname
     if ":" in host:
         host = f"[{host}]"
-    return f"http://{host}:{port}", unquote(parsed.password or "")
+    return f"http://{host}:{port}", unquote(parsed.password or ""), parsed.path.strip("/")
 
 
 def get_json(base_url, path, api_key):
@@ -56,9 +67,13 @@ def get_json(base_url, path, api_key):
 
 
 def check_typesense(search_url):
-    base_url, api_key = endpoint_from_search_url(search_url)
+    base_url, api_key, collection_namespace = endpoint_from_search_url(search_url)
     if not api_key:
         fail("Typesense API credential is missing")
+    if os.environ["NEODB_OWNER_TEST_PROFILE"] == "REMOTE_TYPESENSE" and not re.fullmatch(
+        r"neodb_owner_[0-9]+_[a-f0-9]{12}", collection_namespace
+    ):
+        fail("REMOTE_TYPESENSE collection namespace is not run-unique")
     health = get_json(base_url, "/health", api_key)
     debug = get_json(base_url, "/debug", api_key)
     get_json(base_url, "/collections", api_key)
