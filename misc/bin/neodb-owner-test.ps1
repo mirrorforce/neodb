@@ -41,6 +41,8 @@ $ownerTestService = $null
 $originalEnvironment = @{}
 foreach ($name in @(
         "NEODB_SEARCH_URL",
+        "NEODB_SECRET_KEY",
+        "NEODB_SITE_DOMAIN",
         "NEODB_DATA",
         "COMPOSE_DISABLE_ENV_FILE",
         "NEODB_OWNER_TEST_PROFILE",
@@ -218,6 +220,8 @@ try {
     }
 
     $env:NEODB_OWNER_TEST_PROFILE = $Profile
+    $env:NEODB_SECRET_KEY = "test"
+    $env:NEODB_SITE_DOMAIN = "example.org"
     $env:NEODB_DATA = $dataRoot
     $env:COMPOSE_DISABLE_ENV_FILE = "1"
     $env:NEODB_OWNER_TEST_SOURCE_SHA = $sourceSha
