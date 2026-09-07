@@ -104,12 +104,17 @@ function Remove-RunDataRoot {
     }
 
     if (Test-Path -LiteralPath $dataRoot) {
+        $dataParent = Split-Path -Parent -Path $dataRoot
+        $dataLeaf = Split-Path -Leaf -Path $dataRoot
+        if ([string]::IsNullOrWhiteSpace($dataParent) -or [string]::IsNullOrWhiteSpace($dataLeaf)) {
+            return $false
+        }
         $cleanupImage = "postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310"
         & docker run --rm `
-            --mount "type=bind,source=$dataRoot,target=/neodb-owner-test-data" `
+            --mount "type=bind,source=$dataParent,target=/neodb-owner-test-parent" `
             --entrypoint /bin/sh `
             $cleanupImage `
-            -c "rm -rf /neodb-owner-test-data/* /neodb-owner-test-data/.[!.]* /neodb-owner-test-data/..?*" *>> $logPath
+            -c "rm -rf -- /neodb-owner-test-parent/$dataLeaf" *>> $logPath
         if ([int]$LASTEXITCODE -ne 0) {
             return $false
         }
