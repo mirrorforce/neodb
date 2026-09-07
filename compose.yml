@@ -175,7 +175,7 @@ services:
       - ${NEODB_DATA:-../data}/typesense:/data
     command: "--data-dir /data --api-key=eggplant"
 
-  neodb-owner-tests:
+  neodb-owner-tests: &owner-tests-common
     build:
       context: .
       target: owner-tests
@@ -184,17 +184,16 @@ services:
         buildver: ${NEODB_OWNER_TEST_SOURCE_SHA:-dev-unknown}
         sourcetree: ${NEODB_OWNER_TEST_SOURCE_TREE:-dev-unknown}
     image: ${NEODB_OWNER_TEST_IMAGE:-neodb/neodb:owner-tests}
-    command: ["/bin/sh", "/bin/neodb-t1"]
-    environment:
+    command: ["/bin/sh", "/bin/neodb-owner-test"]
+    environment: &owner-tests-environment
       NEODB_SECRET_KEY: ${NEODB_SECRET_KEY:-test}
       NEODB_SITE_NAME: ${NEODB_SITE_NAME:-test}
       NEODB_SITE_DOMAIN: ${NEODB_SITE_DOMAIN:-example.org}
       NEODB_DB_URL: ${NEODB_DB_URL:-postgres://neodb:aubergine@neodb-db/neodb}
       TAKAHE_DB_URL: ${TAKAHE_DB_URL:-postgres://takahe:aubergine@takahe-db/takahe}
       NEODB_REDIS_URL: ${NEODB_REDIS_URL:-redis://redis:6379/0}
-      # The container entrypoint rejects an absent/empty value.  This must be
-      # injected by the machine-local secure-store wrapper for owner tests.
       NEODB_SEARCH_URL:
+      NEODB_OWNER_TEST_PROFILE:
       NEODB_VENV: /neodb-venv
       TAKAHE_SECRET_KEY: ${NEODB_SECRET_KEY:-test}
       TAKAHE_MAIN_DOMAIN: ${NEODB_SITE_DOMAIN:-example.org}
@@ -203,14 +202,26 @@ services:
       TAKAHE_NO_FEDERATION: "true"
       TAKAHE_ENVIRONMENT: test
       TAKAHE_VENV: /neodb-venv
-    depends_on:
+    depends_on: &owner-tests-depends
       neodb-db:
         condition: service_healthy
       takahe-db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    profiles: ["owner-tests"]
+    profiles: ["owner-tests-remote"]
+
+  neodb-owner-tests-local:
+    <<: *owner-tests-common
+    environment:
+      <<: *owner-tests-environment
+      NEODB_SEARCH_URL: typesense://user:eggplant@typesense:8108/catalog
+      NEODB_OWNER_TEST_PROFILE: LOCAL_DOCKER_TYPESENSE
+    depends_on:
+      <<: *owner-tests-depends
+      typesense:
+        condition: service_started
+    profiles: ["owner-tests-local"]
 
   neodb-db:
     image: postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310

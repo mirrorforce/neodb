@@ -1,3 +1,4 @@
+import re
 from os import environ
 from urllib.parse import urlsplit, urlunsplit
 
@@ -23,8 +24,19 @@ if _xdist_worker:
 else:
     _suffix = ""
 
-environ["INDEX_ALIASES"] = (
-    f"catalog=test-catalog{_suffix},journal=test-journal{_suffix}"
-)
+_search_namespace = urlsplit(environ.get("NEODB_SEARCH_URL", "")).path.strip("/")
+if _search_namespace.startswith("neodb_owner_"):
+    # The owner-test wrapper carries its run namespace in the URL path. The
+    # application transport still uses HTTP; these aliases isolate test state.
+    if not re.fullmatch(r"neodb_owner_[0-9]+_[a-f0-9]{12}", _search_namespace):
+        raise RuntimeError("invalid owner-test Typesense collection namespace")
+    environ["INDEX_ALIASES"] = ",".join(
+        f"{name}={_search_namespace}-{name}{_suffix}"
+        for name in ("catalog", "people", "journal")
+    )
+else:
+    environ["INDEX_ALIASES"] = (
+        f"catalog=test-catalog{_suffix},journal=test-journal{_suffix}"
+    )
 
 from boofilsic.settings import *  # noqa: E402
