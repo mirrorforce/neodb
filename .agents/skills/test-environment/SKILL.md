@@ -111,9 +111,12 @@ The endpoint must be a remote host or host:port only; do not include `http://`,
 Typesense client uses HTTP for the resulting node connection. The remote key
 is read only from the current process environment and must contain only
 URL-userinfo unreserved characters (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, `~`).
-Unsafe values fail closed before external preflight. A local `.env` used by the
-workstation to populate these values remains machine-local and is already
-ignored by the repository; it must never be committed.
+Unsafe values fail closed before external preflight. The NeoDB owner-test
+wrapper consumes explicit arguments and process-environment values only; it
+does not load any `.env` file. Normal VinylHub machine configuration is
+App-owned. When the App controller dispatches this primitive, it may supply
+the required process inputs from its own machine configuration; NeoDB does not
+create a second configuration-init or `.env` load path.
 
 The wrapper validates remote health, authenticated collection access, and
 version 30.1 before starting Docker. It allocates a run-unique collection
