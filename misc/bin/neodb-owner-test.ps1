@@ -91,6 +91,34 @@ function Remove-RunImage {
     return [int]$LASTEXITCODE
 }
 
+function Remove-RunDataRoot {
+    if (-not (Test-Path -LiteralPath $dataRoot)) {
+        return $true
+    }
+
+    try {
+        Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction Stop
+    } catch {
+        # Linux containers may leave root-owned files in the host bind mount.
+    }
+
+    if (Test-Path -LiteralPath $dataRoot) {
+        $cleanupImage = "postgres:14-alpine@sha256:727876d274666da0b92a445390ba093c84b8e9f8343e1c53cd4e9a7ab2d85310"
+        & docker run --rm `
+            --mount "type=bind,source=$dataRoot,target=/neodb-owner-test-data" `
+            --entrypoint /bin/sh `
+            $cleanupImage `
+            -c "rm -rf /neodb-owner-test-data/* /neodb-owner-test-data/.[!.]* /neodb-owner-test-data/..?*" *>> $logPath
+        if ([int]$LASTEXITCODE -ne 0) {
+            return $false
+        }
+
+        Remove-Item -LiteralPath $dataRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    return -not (Test-Path -LiteralPath $dataRoot)
+}
+
 function Test-RunResourcesAbsent {
     $containers = & docker container ls --all --filter "label=com.docker.compose.project=$composeProjectName" --format "{{.ID}}" 2>> $logPath
     $containersCode = [int]$LASTEXITCODE
@@ -325,10 +353,7 @@ try {
             $removeImageCode = Remove-RunImage
             $imageRemains = Test-RunImagePresent
             $resourcesRemain = -not (Test-RunResourcesAbsent)
-            if (Test-Path -LiteralPath $dataRoot) {
-                Remove-Item -LiteralPath $dataRoot -Recurse -Force
-            }
-            $dataRemains = Test-Path -LiteralPath $dataRoot
+            $dataRemains = -not (Remove-RunDataRoot)
             if ($downCode -eq 0 -and $removeImageCode -eq 0 -and -not $imageRemains -and -not $resourcesRemain -and -not $dataRemains -and -not $cleanupFailed) {
                 $cleanup = "PASS"
             } else {
