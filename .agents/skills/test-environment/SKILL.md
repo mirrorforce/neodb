@@ -198,8 +198,8 @@ SECRET_VALUE_RETAINED_IN_REPORT = NO
 
 For OWNER TESTS, service identities must match the selected profile above
 unless later current Human-approved environment qualification explicitly
-supersedes it. OWNER TESTS evidence does not prove OWNER RUNTIME or LOCAL
-INTEGRATION.
+supersedes it. OWNER TESTS evidence does not prove OWNER RUNTIME or
+VINYLHUB DEVELOPMENT.
 
 ## Admission procedure
 
@@ -276,8 +276,8 @@ UNKNOWN
 
 Acceptance evidence must preserve the complete admission record and exact
 source/tree identity for every OWNER TESTS or OWNER RUNTIME claim. A selected
-profile's evidence cannot be promoted to the other profile or to App LOCAL
-INTEGRATION evidence.
+profile's evidence cannot be promoted to the other profile or to VINYLHUB
+DEVELOPMENT evidence.
 
 `ENVIRONMENT_ADMISSION = BLOCKED`, a missing field, or an unproven required
 service means the dependent semantic environment is `BLOCKED`/`NOT_RUN`, not
