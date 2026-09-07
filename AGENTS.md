@@ -70,7 +70,7 @@ tasks, closed Issues, historical branches, or source archaeology.
 - VINYLHUB DEVELOPMENT is owned and admitted by
   `mirrorforce/vinyl-catalog-app`; NeoDB supplies exact owner identities and
   requirements but does not admit that cross-repository composition. An
-  app-owned VINYLHUB_DEV topology must not
+  app-owned VINYLHUB DEVELOPMENT topology must not
   silently overwrite the NeoDB OWNER TESTS profile.
 - OWNER TESTS evidence does not prove OWNER RUNTIME behavior, and OWNER RUNTIME
   evidence does not prove VINYLHUB DEVELOPMENT behavior.
